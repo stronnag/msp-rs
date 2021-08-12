@@ -103,7 +103,7 @@ pub fn reader<T: SerialPort + ?Sized >(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
     loop {
 	match port.read(&mut inp) {
 	    Ok(_) => {
-                for j in inp {
+                for j in inp.iter() {
 		    match n {
 			States::Init => {
 			    if j == b'$' {
