@@ -8,14 +8,6 @@ use std::sync::mpsc;
 
 mod msp;
 
-fn encode_msp_vers(vers: i32, cmd: u16, payload: &[u8]) -> Vec<u8> {
-    let vv = match vers {
-	1 => msp::encode_msp(cmd, payload),
-	_ => msp::encode_msp2(cmd, payload),
-    };
-    vv
-}
-
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options] DEVICE", program);
     print!("{}", opts.usage(&brief));
@@ -45,6 +37,14 @@ fn main() {
         None => ()
     }
 
+    let encode_msp_vers = |cmd, payload| {
+	let vv = match vers {
+	    1 => msp::encode_msp(cmd, payload),
+	    _ => msp::encode_msp2(cmd, payload),
+	};
+	vv
+    };
+
     let port_name = match matches.free.is_empty() {
 	true => serialport::available_ports().expect("No serial port")[0].port_name.clone(),
 	false => matches.free[0].clone(),
@@ -63,7 +63,7 @@ fn main() {
 	msp::reader(&mut *port, tx.clone());
     });
 
-    let mut vv = encode_msp_vers(vers, msp::MSG_IDENT, &[]);
+    let mut vv = encode_msp_vers(msp::MSG_IDENT, &[]);
 
     clone.write_all(&vv).unwrap();
 
@@ -71,7 +71,7 @@ fn main() {
 	match x.cmd {
 	    msp::MSG_IDENT => {
 		println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
-		vv = encode_msp_vers(vers, msp::MSG_NAME, &[]);
+		vv = encode_msp_vers(msp::MSG_NAME, &[]);
 		clone.write_all(&vv).unwrap();
 	    },
 	    msp::MSG_NAME => {
