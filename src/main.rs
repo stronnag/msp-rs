@@ -64,12 +64,13 @@ fn main() {
     });
 
     let mut vv = encode_msp_vers(vers, msp::MSG_IDENT, &[]);
+
     clone.write_all(&vv).unwrap();
 
     for x in rx {
 	match x.cmd {
 	    msp::MSG_IDENT => {
-		println!("MSP Vers: {}", x.data[0]);
+		println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
 		vv = encode_msp_vers(vers, msp::MSG_NAME, &[]);
 		clone.write_all(&vv).unwrap();
 	    },
