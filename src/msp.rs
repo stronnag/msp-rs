@@ -1,0 +1,230 @@
+use serialport::SerialPort;
+use std::sync::mpsc;
+use std::io;
+
+fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {
+    c ^= a;
+    for _i in 0..8 {
+        if (c & 0x80) != 0 {
+            c = (c << 1) ^ 0xd5
+        } else {
+            c = c << 1
+        }
+    }
+    return c
+}
+
+pub fn encode_msp2(cmd: u16, payload: &[u8]) -> Vec<u8> {
+    let mut paylen = 0u16;
+    let payl = payload.len();
+    if payl > 0 {
+	paylen = payl as u16;
+    }
+    let mut v: Vec<u8> = vec![0; payl + 9];
+    v[0] = b'$';
+    v[1] = b'X';
+    v[2] = b'<';
+    v[3] = 0;
+    v[4] = (cmd & 0xff) as u8;
+    v[5] = (cmd >> 8) as u8;
+    v[6] = (paylen & 0xff) as u8;
+    v[7] = (paylen >> 8) as u8;
+
+    let mut j = 8;
+     for x in payload.iter() {
+	v[j] = *x;
+	j += 1;
+    }
+    let mut crc: u8 = 0;
+    for i in 3..payl+8 {
+	crc = crc8_dvb_s2(crc, v[i]);
+    }
+    v[8+payl] = crc;
+    return v;
+}
+
+pub fn encode_msp(cmd: u16, payload: &[u8]) -> Vec<u8> {
+    let mut paylen = 0u8;
+    let payl = payload.len();
+    if payl > 0 {
+	paylen = payl as u8;
+    }
+    let mut v: Vec<u8> = vec![0; payl + 6];
+    v[0] = b'$';
+    v[1] = b'M';
+    v[2] = b'<';
+    v[3] = paylen;
+    v[4] = cmd as u8;
+    let mut j = 5;
+    for x in payload.iter() {
+	v[j] = *x;
+	j += 1;
+    }
+    let mut crc: u8 = 0;
+    for i in 3..payl+5 {
+	crc ^= v[i];
+    }
+    v[5+payl] = crc;
+    return v;
+}
+
+pub const MSG_IDENT: u16 = 100;
+pub const MSG_NAME: u16 = 10;
+
+enum States {
+    Init,
+    M,
+    Dirn,
+    Len,
+    Cmd,
+    Data,
+    Crc,
+
+    XHeader2,
+    XFlags,
+    XId1,
+    XId2,
+    XLen1,
+    XLen2,
+    XData,
+    XChecksum
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct MSPMsg {
+    pub len:  u16,
+    pub cmd:  u16,
+    pub ok:   bool,
+    pub data: Vec<u8>
+}
+
+pub fn reader<T: SerialPort + ?Sized >(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
+    let mut msg = MSPMsg::default();
+    let mut n = States::Init;
+    let mut inp: [u8; 128] = [0; 128];
+    let mut crc = 0u8;
+    let mut count  = 0u16;
+    loop {
+	match port.read(&mut inp) {
+	    Ok(bytes) => {
+                for j in 0..bytes {
+		    match n {
+			States::Init => {
+			    if inp[j] == b'$' {
+                                n = States::M;
+                                msg.ok = false;
+                                msg.len = 0;
+                                msg.cmd = 0;
+			    }
+			},
+			States::M => {
+			    n = match inp[j] {
+				b'M' =>  States::Dirn,
+				b'X' =>  States::XHeader2,
+				_ =>  States::Init
+			    }
+			},
+			States::Dirn => {
+			    match inp[j] {
+				b'!' => n = States::Len,
+				b'>' => { n = States::Len; msg.ok = true },
+				_ => n = States::Init
+			    }
+			},
+			States::XHeader2 => {
+			    match inp[j] {
+				b'!' => n = States::XFlags,
+				b'>' => { n = States::XFlags; msg.ok = true },
+				_ => n = States::Init
+			    }
+			},
+			States::XFlags => {
+                            crc = crc8_dvb_s2(0, inp[j]);
+                            n = States::XId1;
+			},
+                        States::XId1 => {
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.cmd = inp[j] as u16;
+			    n = States::XId2;
+
+			},
+                        States::XId2 => {
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.cmd |= (inp[j] as u16) << 8;
+			    n = States::XLen1;
+			},
+                        States::XLen1 => {
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.len = inp[j] as u16;
+			    n = States::XLen2;
+			},
+                        States::XLen2 => {
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.len |= (inp[j] as u16) << 8;
+			    if msg.len > 0 {
+				n = States::XData;
+                                count = 0;
+                                msg.data = vec![0; msg.len.into()];
+			    } else {
+				n = States::XChecksum;
+			    }
+			},
+			States::XData => {
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.data[count as usize] = inp[j];
+                            count += 1;
+                            if count == msg.len {
+                                n = States::XChecksum;
+                            }
+			},
+                        States::XChecksum => {
+                            if crc != inp[j] {
+                                println!("CRC error on {}", msg.cmd)
+                            } else {
+				tx.send(msg.clone()).unwrap();
+                            }
+                            n = States::Init;
+			},
+			States::Len => {
+                            msg.len = inp[j] as u16;
+                            crc = inp[j];
+                            n = States::Cmd;
+			},
+			States::Cmd => {
+                            msg.cmd = inp[j] as u16;
+                            crc ^= inp[j];
+                            if msg.len == 0 {
+                                n = States::Crc;
+                            } else {
+                                msg.data = vec![0; msg.len.into()];
+                                n = States::Data;
+                                count = 0;
+                            }
+			},
+                        States::Data => {
+                            msg.data[count as usize] = inp[j];
+                            crc ^= inp[j];
+                            count += 1;
+                            if count == msg.len {
+                                n = States::Crc;
+                            }
+			},
+                        States::Crc => {
+			    if crc != inp[j] {
+                                println!("CRC error on {}", msg.cmd)
+                            } else {
+				tx.send(msg.clone()).unwrap();
+                            }
+                            n = States::Init;
+			}
+		    }
+                }
+	    }
+	    Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+	    Err(e) => {
+		eprintln!("{:?}", e);
+		return;
+	    },
+        }
+    }
+}
