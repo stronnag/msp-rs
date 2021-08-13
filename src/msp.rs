@@ -2,6 +2,18 @@ use serialport::SerialPort;
 use std::io;
 use std::sync::mpsc;
 
+pub const MSG_IDENT: u16 = 100;
+pub const MSG_NAME: u16 = 10;
+pub const MSG_API_VERSION: u16 = 1;
+pub const MSG_FC_VARIANT: u16 = 2;
+pub const MSG_FC_VERSION: u16 = 3;
+pub const MSG_BOARD_INFO: u16 = 4;
+pub const MSG_BUILD_INFO: u16 = 5;
+pub const MSG_WP_GETINFO: u16 = 20;
+pub const MSG_RAW_GPS: u16 = 106;
+pub const MSG_ANALOG: u16 = 110;
+pub const MSG_DEBUGMSG: u16 = 253;
+
 fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {
     c ^= a;
     for _ in 0..8 {
@@ -11,7 +23,7 @@ fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {
             c = c << 1
         }
     }
-    return c;
+    c
 }
 
 pub fn encode_msp2(cmd: u16, payload: &[u8]) -> Vec<u8> {
@@ -38,7 +50,7 @@ pub fn encode_msp2(cmd: u16, payload: &[u8]) -> Vec<u8> {
         crc = crc8_dvb_s2(crc, v[i]);
     }
     v.push(crc);
-    return v;
+    v
 }
 
 pub fn encode_msp(cmd: u16, payload: &[u8]) -> Vec<u8> {
@@ -61,11 +73,8 @@ pub fn encode_msp(cmd: u16, payload: &[u8]) -> Vec<u8> {
         crc ^= v[i];
     }
     v.push(crc);
-    return v;
+    v
 }
-
-pub const MSG_IDENT: u16 = 100;
-pub const MSG_NAME: u16 = 10;
 
 enum States {
     Init,
