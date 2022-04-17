@@ -86,19 +86,23 @@ fn main() {
     for x in rx {
         match x.cmd {
             msp::MSG_IDENT => {
-                println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
+                if x.ok {
+                    println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_NAME, &[]))
                     .unwrap();
             }
             msp::MSG_NAME => {
-                println!("Name: {}", String::from_utf8_lossy(&x.data));
+                if x.ok {
+                    println!("Name: {}", String::from_utf8_lossy(&x.data));
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_API_VERSION, &[]))
                     .unwrap();
             }
             msp::MSG_API_VERSION => {
-                if x.len > 2 {
+                if x.ok && x.len > 2 {
                     println!("API Version: {}.{}", x.data[1], x.data[2]);
                 }
                 writer
@@ -106,79 +110,97 @@ fn main() {
                     .unwrap();
             }
             msp::MSG_FC_VARIANT => {
-                println!("Firmware: {}", String::from_utf8_lossy(&x.data[0..4]));
+                if x.ok {
+                    println!("Firmware: {}", String::from_utf8_lossy(&x.data[0..4]));
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_FC_VERSION, &[]))
                     .unwrap();
             }
             msp::MSG_FC_VERSION => {
-                println!("FW Version: {}.{}.{}", x.data[0], x.data[1], x.data[2]);
+                if x.ok {
+                    println!("FW Version: {}.{}.{}", x.data[0], x.data[1], x.data[2]);
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_BUILD_INFO, &[]))
                     .unwrap();
             }
             msp::MSG_BUILD_INFO => {
-                println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
+                if x.ok {
+                    println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_BOARD_INFO, &[]))
                     .unwrap();
             }
             msp::MSG_BOARD_INFO => {
-                let board = if x.len > 8 {
-                    String::from_utf8_lossy(&x.data[9..])
-                } else {
-                    String::from_utf8_lossy(&x.data[0..4])
+                if x.ok {
+                    let board = if x.len > 8 {
+                        String::from_utf8_lossy(&x.data[9..])
+                    } else {
+                        String::from_utf8_lossy(&x.data[0..4])
+                    }
+                    .to_string();
+                    println!("Board: {}", board);
                 }
-                .to_string();
-                println!("Board: {}", board);
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_WP_GETINFO, &[]))
                     .unwrap();
             }
 
             msp::MSG_WP_GETINFO => {
-                println!(
-                    "Extant waypoints in FC: {} of {}, valid {}",
-                    x.data[3],
-                    x.data[1],
-                    (x.data[2] == 1)
-                );
+                if x.ok {
+                    println!(
+                        "Extant waypoints in FC: {} of {}, valid {}",
+                        x.data[3],
+                        x.data[1],
+                        (x.data[2] == 1)
+                    );
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_ANALOG, &[]))
                     .unwrap();
             }
             msp::MSG_ANALOG => {
-                let volts: f32 = x.data[0] as f32 / 10.0;
-                println!("Voltage: {}", volts);
+                if x.ok {
+                    let volts: f32 = x.data[0] as f32 / 10.0;
+                    println!("Voltage: {}", volts);
+                }
                 writer
                     .write_all(&encode_msp_vers(msp::MSG_RAW_GPS, &[]))
                     .unwrap();
             }
-
             msp::MSG_RAW_GPS => {
                 // included as a more complex example
-                let fix = x.data[0];
-                let nsat = x.data[1];
-                let lat: f32 = i32::from_le_bytes(x.data[2..6].try_into().unwrap()) as f32 / 1e7;
-                let lon: f32 = i32::from_le_bytes(x.data[6..10].try_into().unwrap()) as f32 / 1e7;
-                let alt = i16::from_le_bytes(x.data[10..12].try_into().unwrap());
-                let spd: f32 =
-                    u16::from_le_bytes(x.data[12..14].try_into().unwrap()) as f32 / 100.0;
-                let cog: f32 = u16::from_le_bytes(x.data[14..16].try_into().unwrap()) as f32 / 10.0;
-                let hdop: f32 = if x.len > 16 {
-                    u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0
-                } else {
-                    99.99
-                };
-                println!(
-                    "GPS: fix {}, sats {}, lat, lon, alt {} {} {}, spd {} cog {} hdop {}",
-                    fix, nsat, lat, lon, alt, spd, cog, hdop
-                );
+                if x.ok {
+                    let fix = x.data[0];
+                    let nsat = x.data[1];
+                    let lat: f32 =
+                        i32::from_le_bytes(x.data[2..6].try_into().unwrap()) as f32 / 1e7;
+                    let lon: f32 =
+                        i32::from_le_bytes(x.data[6..10].try_into().unwrap()) as f32 / 1e7;
+                    let alt = i16::from_le_bytes(x.data[10..12].try_into().unwrap());
+                    let spd: f32 =
+                        u16::from_le_bytes(x.data[12..14].try_into().unwrap()) as f32 / 100.0;
+                    let cog: f32 =
+                        u16::from_le_bytes(x.data[14..16].try_into().unwrap()) as f32 / 10.0;
+                    let hdop: f32 = if x.len > 16 {
+                        u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0
+                    } else {
+                        99.99
+                    };
+                    println!(
+                        "GPS: fix {}, sats {}, lat, lon, alt {} {} {}, spd {} cog {} hdop {}",
+                        fix, nsat, lat, lon, alt, spd, cog, hdop
+                    );
+                }
                 return; // we're done
             }
             msp::MSG_DEBUGMSG => {
-                let s = String::from_utf8_lossy(&x.data);
-                println!("Debug: {}", s);
+                if x.ok {
+                    let s = String::from_utf8_lossy(&x.data);
+                    println!("Debug: {}", s);
+                }
             }
             _ => println!("Recv: {:#?}", x),
         }
