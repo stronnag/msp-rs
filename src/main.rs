@@ -162,16 +162,17 @@ fn main() {
                     .unwrap();
             }
             msp::MSG_ANALOG => {
+                let mut nxt = x.cmd;
                 if x.ok {
                     let volts: f32 = x.data[0] as f32 / 10.0;
+                    nxt = msp::MSG_RAW_GPS;
                     println!("Voltage: {}", volts);
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_RAW_GPS, &[]))
-                    .unwrap();
+                writer.write_all(&encode_msp_vers(nxt, &[])).unwrap();
             }
             msp::MSG_RAW_GPS => {
                 // included as a more complex example
+                let mut nxt = x.cmd;
                 if x.ok {
                     let fix = x.data[0];
                     let nsat = x.data[1];
@@ -193,8 +194,10 @@ fn main() {
                         "GPS: fix {}, sats {}, lat, lon, alt {} {} {}, spd {} cog {} hdop {}",
                         fix, nsat, lat, lon, alt, spd, cog, hdop
                     );
+                    nxt = msp::MSG_ANALOG;
                 }
-                return; // we're done
+                //                return; // we're done
+                writer.write_all(&encode_msp_vers(nxt, &[])).unwrap();
             }
             msp::MSG_DEBUGMSG => {
                 if x.ok {

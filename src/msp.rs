@@ -106,17 +106,16 @@ pub struct MSPMsg {
 pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
-    let mut inp: [u8; 128] = [0; 128];
+    let mut inp: [u8; 256] = [0; 256];
     let mut crc = 0u8;
     let mut count = 0u16;
     loop {
-        match port.read(&mut inp) {
-            Ok(_) => {
-                for j in inp.iter() {
-                    // .iter() and *j required for older rustc, alas
+        match port.read(inp.as_mut_slice()) {
+            Ok(t) => {
+                for j in 0..t {
                     match n {
                         States::Init => {
-                            if *j == b'$' {
+                            if inp[j] == b'$' {
                                 n = States::M;
                                 msg.ok = false;
                                 msg.len = 0;
@@ -124,13 +123,13 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             }
                         }
                         States::M => {
-                            n = match *j {
+                            n = match inp[j] {
                                 b'M' => States::Dirn,
                                 b'X' => States::XHeader2,
                                 _ => States::Init,
                             }
                         }
-                        States::Dirn => match *j {
+                        States::Dirn => match inp[j] {
                             b'!' => n = States::Len,
                             b'>' => {
                                 n = States::Len;
@@ -138,7 +137,7 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             }
                             _ => n = States::Init,
                         },
-                        States::XHeader2 => match *j {
+                        States::XHeader2 => match inp[j] {
                             b'!' => n = States::XFlags,
                             b'>' => {
                                 n = States::XFlags;
@@ -147,27 +146,27 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             _ => n = States::Init,
                         },
                         States::XFlags => {
-                            crc = crc8_dvb_s2(0, *j);
+                            crc = crc8_dvb_s2(0, inp[j]);
                             n = States::XId1;
                         }
                         States::XId1 => {
-                            crc = crc8_dvb_s2(crc, *j);
-                            msg.cmd = *j as u16;
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.cmd = inp[j] as u16;
                             n = States::XId2;
                         }
                         States::XId2 => {
-                            crc = crc8_dvb_s2(crc, *j);
-                            msg.cmd |= (*j as u16) << 8;
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.cmd |= (inp[j] as u16) << 8;
                             n = States::XLen1;
                         }
                         States::XLen1 => {
-                            crc = crc8_dvb_s2(crc, *j);
-                            msg.len = *j as u16;
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.len = inp[j] as u16;
                             n = States::XLen2;
                         }
                         States::XLen2 => {
-                            crc = crc8_dvb_s2(crc, *j);
-                            msg.len |= (*j as u16) << 8;
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.len |= (inp[j] as u16) << 8;
                             if msg.len > 0 {
                                 n = States::XData;
                                 count = 0;
@@ -177,29 +176,32 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             }
                         }
                         States::XData => {
-                            crc = crc8_dvb_s2(crc, *j);
-                            msg.data[count as usize] = *j;
+                            crc = crc8_dvb_s2(crc, inp[j]);
+                            msg.data[count as usize] = inp[j];
                             count += 1;
                             if count == msg.len {
                                 n = States::XChecksum;
                             }
                         }
                         States::XChecksum => {
-                            if crc != *j {
-                                println!("CRC error on {}", msg.cmd)
-                            } else {
-                                tx.send(msg.clone()).unwrap();
+                            if crc != inp[j] {
+                                println!(
+                                    "XCRC error on {} {} {} l={}",
+                                    msg.cmd, crc, inp[j], msg.len
+                                );
+                                msg.ok = false
                             }
+                            tx.send(msg.clone()).unwrap();
                             n = States::Init;
                         }
                         States::Len => {
-                            msg.len = *j as u16;
-                            crc = *j;
+                            msg.len = inp[j] as u16;
+                            crc = inp[j];
                             n = States::Cmd;
                         }
                         States::Cmd => {
-                            msg.cmd = *j as u16;
-                            crc ^= *j;
+                            msg.cmd = inp[j] as u16;
+                            crc ^= inp[j];
                             if msg.len == 0 {
                                 n = States::Crc;
                             } else {
@@ -209,19 +211,19 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             }
                         }
                         States::Data => {
-                            msg.data[count as usize] = *j;
-                            crc ^= *j;
+                            msg.data[count as usize] = inp[j];
+                            crc ^= inp[j];
                             count += 1;
                             if count == msg.len {
                                 n = States::Crc;
                             }
                         }
                         States::Crc => {
-                            if crc != *j {
-                                println!("CRC error on {}", msg.cmd)
-                            } else {
-                                tx.send(msg.clone()).unwrap();
+                            if crc != inp[j] {
+                                println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
+                                msg.ok = false;
                             }
+                            tx.send(msg.clone()).unwrap();
                             n = States::Init;
                         }
                     }
