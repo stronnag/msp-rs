@@ -133,7 +133,6 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             b'!' => n = States::Len,
                             b'>' => {
                                 n = States::Len;
-                                msg.ok = true
                             }
                             _ => n = States::Init,
                         },
@@ -141,7 +140,6 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             b'!' => n = States::XFlags,
                             b'>' => {
                                 n = States::XFlags;
-                                msg.ok = true
                             }
                             _ => n = States::Init,
                         },
@@ -190,6 +188,8 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                                     msg.cmd, crc, inp[j], msg.len
                                 );
                                 msg.ok = false
+                            } else {
+                                msg.ok = true
                             }
                             tx.send(msg.clone()).unwrap();
                             n = States::Init;
@@ -222,6 +222,8 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                             if crc != inp[j] {
                                 println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
                                 msg.ok = false;
+                            } else {
+                                msg.ok = true
                             }
                             tx.send(msg.clone()).unwrap();
                             n = States::Init;
@@ -229,10 +231,13 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                     }
                 }
             }
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+            Err(ref e) if e.kind() == io::ErrorKind::BrokenPipe => return,
             Err(e) => {
-                eprintln!("{:?}", e);
-                return;
+                println!("{:?}", e);
+                msg.len = 0;
+                msg.ok = false;
+                tx.send(msg.clone()).unwrap();
+                n = States::Init
             }
         }
     }
