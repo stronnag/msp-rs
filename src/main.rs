@@ -166,7 +166,7 @@ fn main() {
                 if x.ok {
                     let volts: f32 = x.data[0] as f32 / 10.0;
                     nxt = msp::MSG_RAW_GPS;
-                    println!("Voltage: {}", volts);
+                    println!("Voltage: {:.2}", volts);
                 }
                 writer.write_all(&encode_msp_vers(nxt, &[])).unwrap();
             }
@@ -191,7 +191,7 @@ fn main() {
                         99.99
                     };
                     println!(
-                        "GPS: fix {}, sats {}, lat, lon, alt {} {} {}, spd {} cog {} hdop {}",
+                        "GPS: fix {:2}, sats {:2}, lat, lon, alt {:.6} {:.6} {:2}, spd {:.2} cog {:5.1} hdop {:2}",
                         fix, nsat, lat, lon, alt, spd, cog, hdop
                     );
                     nxt = msp::MSG_ANALOG;
