@@ -1,11 +1,15 @@
 [package]
 name = "msptest"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 authors = ["Jonathan Hudson <jh+github@daria.co.uk>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serialport = "4.0.1"
+serialport = "4.2.0"
 getopts = "0.2"
+
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"

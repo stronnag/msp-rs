@@ -67,7 +67,7 @@ fn main() {
 
     println!("Serial port: {}", port_name);
     let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(100))
+        .timeout(Duration::from_millis(500))
         .open()
         .expect("Failed to open serial port");
 
@@ -84,54 +84,45 @@ fn main() {
         .unwrap();
 
     for x in rx {
+        let mut nxt = x.cmd;
         match x.cmd {
             msp::MSG_IDENT => {
                 if x.ok {
-                    println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
+                    if x.len > 0 {
+                        println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
+                    }
+                    nxt = msp::MSG_NAME
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_NAME, &[]))
-                    .unwrap();
             }
             msp::MSG_NAME => {
                 if x.ok {
                     println!("Name: {}", String::from_utf8_lossy(&x.data));
+                    nxt = msp::MSG_API_VERSION
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_API_VERSION, &[]))
-                    .unwrap();
             }
             msp::MSG_API_VERSION => {
                 if x.ok && x.len > 2 {
                     println!("API Version: {}.{}", x.data[1], x.data[2]);
+                    nxt = msp::MSG_FC_VARIANT
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_FC_VARIANT, &[]))
-                    .unwrap();
             }
             msp::MSG_FC_VARIANT => {
                 if x.ok {
                     println!("Firmware: {}", String::from_utf8_lossy(&x.data[0..4]));
+                    nxt = msp::MSG_FC_VERSION
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_FC_VERSION, &[]))
-                    .unwrap();
             }
             msp::MSG_FC_VERSION => {
                 if x.ok {
                     println!("FW Version: {}.{}.{}", x.data[0], x.data[1], x.data[2]);
+                    nxt = msp::MSG_BUILD_INFO
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_BUILD_INFO, &[]))
-                    .unwrap();
             }
             msp::MSG_BUILD_INFO => {
                 if x.ok {
                     println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
+                    nxt = msp::MSG_BOARD_INFO
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_BOARD_INFO, &[]))
-                    .unwrap();
             }
             msp::MSG_BOARD_INFO => {
                 if x.ok {
@@ -142,10 +133,8 @@ fn main() {
                     }
                     .to_string();
                     println!("Board: {}", board);
+                    nxt = msp::MSG_WP_GETINFO
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_WP_GETINFO, &[]))
-                    .unwrap();
             }
 
             msp::MSG_WP_GETINFO => {
@@ -156,23 +145,18 @@ fn main() {
                         x.data[1],
                         (x.data[2] == 1)
                     );
+                    nxt = msp::MSG_ANALOG
                 }
-                writer
-                    .write_all(&encode_msp_vers(msp::MSG_ANALOG, &[]))
-                    .unwrap();
             }
             msp::MSG_ANALOG => {
-                let mut nxt = x.cmd;
                 if x.ok {
                     let volts: f32 = x.data[0] as f32 / 10.0;
                     nxt = msp::MSG_RAW_GPS;
                     println!("Voltage: {:.2}", volts);
                 }
-                writer.write_all(&encode_msp_vers(nxt, &[])).unwrap();
             }
             msp::MSG_RAW_GPS => {
                 // included as a more complex example
-                let mut nxt = x.cmd;
                 if x.ok {
                     let fix = x.data[0];
                     let nsat = x.data[1];
@@ -196,17 +180,17 @@ fn main() {
                     );
                     nxt = msp::MSG_ANALOG;
                 }
-                //                return; // we're done
-                writer.write_all(&encode_msp_vers(nxt, &[])).unwrap();
             }
             msp::MSG_DEBUGMSG => {
                 if x.ok {
                     let s = String::from_utf8_lossy(&x.data);
                     println!("Debug: {}", s);
+                    nxt = msp::MSG_IDENT
                 }
             }
             _ => println!("Recv: {:#?}", x),
         }
+        writer.write_all(&encode_msp_vers(nxt, &[])).unwrap();
     }
     thr.join().unwrap();
 }
