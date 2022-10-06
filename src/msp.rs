@@ -1,5 +1,7 @@
 use serialport::SerialPort;
 use std::io;
+use std::io::Write; // <--- bring flush() into scope
+
 use std::sync::mpsc;
 
 pub const MSG_IDENT: u16 = 100;
@@ -103,12 +105,28 @@ pub struct MSPMsg {
     pub data: Vec<u8>,
 }
 
+fn timeout_marker(val: u32) {
+    let idx = val % 4;
+    let c: char;
+    match idx {
+        0 => c = '|',
+        1 => c = '/',
+        2 => c = '-',
+        3 => c = '\\',
+        4_u32..=u32::MAX => todo!(),
+    }
+    print!("{}\x08", c);
+    io::stdout().flush().unwrap();
+}
+
 pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
     let mut inp: [u8; 256] = [0; 256];
     let mut crc = 0u8;
     let mut count = 0u16;
+    let mut tcount = 0u32;
+
     loop {
         match port.read(inp.as_mut_slice()) {
             Ok(t) => {
@@ -232,6 +250,10 @@ pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::BrokenPipe => return,
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
+                timeout_marker(tcount);
+                tcount += 1;
+            }
             Err(e) => {
                 println!("{:?}", e);
                 msg.len = 0;
