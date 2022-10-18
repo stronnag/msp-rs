@@ -2,8 +2,6 @@ use serialport::SerialPort;
 use std::io;
 use std::io::Write; // <--- bring flush() into scope
 
-use std::sync::mpsc;
-
 pub const MSG_IDENT: u16 = 100;
 pub const MSG_NAME: u16 = 10;
 pub const MSG_API_VERSION: u16 = 1;
@@ -119,7 +117,7 @@ fn timeout_marker(val: u32) {
     io::stdout().flush().unwrap();
 }
 
-pub fn reader<T: SerialPort + ?Sized>(port: &mut T, tx: mpsc::Sender<MSPMsg>) {
+pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
     let mut inp: [u8; 256] = [0; 256];

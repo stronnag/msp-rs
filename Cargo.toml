@@ -9,6 +9,8 @@ authors = ["Jonathan Hudson <jh+github@daria.co.uk>"]
 [dependencies]
 serialport = "4.2.0"
 getopts = "0.2"
+crossbeam = "0.8.2"
+crossbeam-channel = "0.5"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
