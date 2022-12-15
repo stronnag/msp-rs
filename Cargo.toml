@@ -11,6 +11,9 @@ serialport = "4.2.0"
 getopts = "0.2"
 crossbeam = "0.8.2"
 crossbeam-channel = "0.5"
+ctrlc = "3.2.4"
+anyhow = "*"
+terminfo = "0.7"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
