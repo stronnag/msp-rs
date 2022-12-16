@@ -11,9 +11,8 @@ Note that this is about day 2 of the author's rust adventure, it may be non-idio
 Bench test FC, indoors, somewhat random GPS data.
 
 ```
-$ target/release/msptest /dev/rfcomm1
+$ msptest /dev/rfcomm1
 Serial port: /dev/rfcomm1
-MSP Vers: 231, (protocol v2)
 Name: BenchyMcTest
 API Version: 2.4
 Firmware: INAV
@@ -29,22 +28,63 @@ GPS: fix 2, sats 5, lat, lon, alt 50.9***** -1.5***** -1, spd 0.33 cog 7.7 hdop 
 
 ```
 $ target/release/msptest --help
-Usage: target/release/msptest [options] DEVICE
+Usage: msptest [options] DEVICE
 
 Options:
     -m, --mspvers 2     set msp version
+    -1, --once          exit after one iteration
+    -s, --slow          slow mode
     -h, --help          print this help menu
-
 ```
 
-On POSIX platforms at least, if no device is given, the application will make a reasonable attempt to evince any valid serial device.
+On POSIX platforms at least, if no device is given, the application will make a reasonable attempt to evince any valid serial device, with `msptest` installed on `$PATH`:
 
 ```
-$ target/release/msptest
+$ msptest
 Serial port: /dev/ttyACM0
-...
+Name: BenchyMcTesty
+API Version: 2.4
+Firmware: INAV
+FW Version: 6.0.0
+Git revsion: 4bbd2fa5
+Board: WINGFC
+Extant waypoints in FC: 0 of 120, valid false
+Uptime: 550s
+Voltage: 0.00
+GPS: fix 0, sats 0, lat, lon, alt 0.000000 0.000000 0, spd 0.00 cog 0 hdop 99.99
+Elapsed 37.25s 2306 messages, rate 61.90/s
+^C
+```
+
+^C to exit.
+
+## Terminfo
+
+`msptest` uses `terminfo` for cursor addressing. On some platforms, it may be necessary to define where to find the `terminfo` data, e.g. FreeBSD:
 
 ```
+# Define USB serial device ...
+TERMINFO=/usr/local/share/terminfo mspview /dev/cuaU0
+```
+
+### Non-POSIX OS
+
+On non-POSIX OS (i.e. Windows), it will be necessary to define both `TERM` and `TERMINFO` and provide a TERMINFO data file. The canonical `ms-terminal` should work in Windows Terminal, for example (powershell):
+
+Once:
+```
+mkdir terminfo
+mkdir terminfo/m
+cp <somepath>\ms-terminal terminfo/m
+```
+Then, something like:
+
+```
+$env:TERM = 'ms-terminal`
+$env:TERMINFO = <pathto>\terminfo
+msptest COM3
+```
+
 
 ## Licence
 
