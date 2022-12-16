@@ -60,11 +60,22 @@ Elapsed 37.25s 2306 messages, rate 61.90/s
 
 ## Terminfo
 
-`msptest` uses `terminfo` for cursor addressing. On some platforms, it may be necessary to define where to find the `terminfo` data, e.g. FreeBSD:
+`msptest` uses `terminfo` for cursor addressing. On some platforms, it may be necessary to define where to find the `terminfo` data. e.g. FreeBSD, also defining the device node:
 
 ```
-# Define USB serial device ...
-TERMINFO=/usr/local/share/terminfo mspview /dev/cuaU0
+$ TERMINFO=/usr/local/share/terminfo msptest /dev/cuaU0
+Serial port: /dev/cuaU0
+Name: BenchyMcTesty
+API Version: 2.4
+Firmware: INAV
+FW Version: 6.0.0
+Git revsion: 4bbd2fa5
+Board: WINGFC
+Extant waypoints in FC: 0 of 120, valid false
+Uptime: 69s
+Voltage: 0.00
+GPS: fix 0, sats 0, lat, lon, alt 0.000000 0.000000 0, spd 0.00 cog 0 hdop 99.99
+Elapsed 48.81s 3020 messages, rate 61.88/s
 ```
 
 ### Non-POSIX OS
