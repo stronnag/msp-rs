@@ -10,8 +10,10 @@ use getopts::Options;
 use std::convert::TryInto;
 use std::env;
 use std::io;
+use std::time::Instant;
 use std::time::Duration;
-use std::{thread, time};
+use std::thread;
+use std::time;
 use anyhow::Result;
 
 mod msp;
@@ -53,7 +55,7 @@ fn print_usage(program: &str, opts: Options) {
 
 fn clean_exit(info: &terminfo::Database) {
     term_reset(info);
-    println!("\n\n");
+    println!("\n\n\n");
     std::process::exit(0);
 }
 
@@ -63,6 +65,7 @@ fn main() -> Result<()> {
     let mut vers = 2;
     let mut slow = false;
     let mut once = false;    
+    let mut msgcnt = 0;
     
     let mut opts = Options::new();
     opts.optopt("m", "mspvers", "set msp version", "2");
@@ -121,7 +124,7 @@ fn main() -> Result<()> {
 
     println!("Serial port: {}", port_name);
     let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(500))
+        .timeout(Duration::from_millis(1200))
         .open()?;
 
     let ctrl_c_events = ctrl_channel()?;
@@ -140,6 +143,7 @@ fn main() -> Result<()> {
             .write_all(&encode_msp_vers(msp::MSG_IDENT, &[]))
             .unwrap();
 
+        let st = Instant::now();
         loop {
             select! {
 
@@ -151,44 +155,45 @@ fn main() -> Result<()> {
                     match res {
                         Ok(x) => {
                             let mut nxt = x.cmd;
+                            msgcnt += 1;
                             match x.cmd {
                                 msp::MSG_IDENT => {
                                     if x.ok {
                                         if x.len > 0 {
                                             println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
                                         }
-                                        nxt = msp::MSG_NAME
                                     }
+                                    nxt = msp::MSG_NAME
                                 }
                                 msp::MSG_NAME => {
                                     if x.ok {
                                         println!("Name: {}", String::from_utf8_lossy(&x.data));
-                                        nxt = msp::MSG_API_VERSION
                                     }
+                                    nxt = msp::MSG_API_VERSION
                                 }
                                 msp::MSG_API_VERSION => {
                                     if x.ok && x.len > 2 {
                                         println!("API Version: {}.{}", x.data[1], x.data[2]);
-                                        nxt = msp::MSG_FC_VARIANT
                                     }
+                                    nxt = msp::MSG_FC_VARIANT
                                 }
                                 msp::MSG_FC_VARIANT => {
                                     if x.ok {
                                         println!("Firmware: {}", String::from_utf8_lossy(&x.data[0..4]));
-                                        nxt = msp::MSG_FC_VERSION
                                     }
+                                    nxt = msp::MSG_FC_VERSION
                                 }
                                 msp::MSG_FC_VERSION => {
                                     if x.ok {
                                         println!("FW Version: {}.{}.{}", x.data[0], x.data[1], x.data[2]);
-                                        nxt = msp::MSG_BUILD_INFO
                                     }
+                                    nxt = msp::MSG_BUILD_INFO
                                 }
                                 msp::MSG_BUILD_INFO => {
                                     if x.ok {
                                         println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
-                                        nxt = msp::MSG_BOARD_INFO
                                     }
+                                    nxt = msp::MSG_BOARD_INFO
                                 }
                                 msp::MSG_BOARD_INFO => {
                                     if x.ok {
@@ -199,8 +204,8 @@ fn main() -> Result<()> {
                                         }
                                         .to_string();
                                         println!("Board: {}", board);
-                                        nxt = msp::MSG_WP_GETINFO
                                     }
+                                    nxt = msp::MSG_WP_GETINFO
                                 }
                                 
                                 msp::MSG_WP_GETINFO => {
@@ -211,8 +216,8 @@ fn main() -> Result<()> {
                                             x.data[1],
                                             (x.data[2] == 1)
                                         );
-                                        nxt = msp::MSG_MISC2;
                                     }
+                                    nxt = msp::MSG_MISC2;
                                 }
                                 msp::MSG_MISC2 => {
                                     if x.ok {
@@ -255,9 +260,15 @@ fn main() -> Result<()> {
                                         print!(
                                             "GPS: fix {}, sats {}, lat, lon, alt {:.6} {:.6} {}, spd {:.2} cog {:.0} hdop {:.2}", fix, nsat, lat, lon, alt, spd, cog, hdop);
                                         term_clrlf(&info);
-                                        print!("\n");
-                                        term_up(&info, 3);
+                                        println!();
                                         nxt = msp::MSG_MISC2;
+                                        let dura = st.elapsed();
+                                        let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
+                                        let rate = msgcnt as f64 / duras;
+                                        print!("Elapsed {:.2}s {} messages, rate {:.2}/s", duras, msgcnt, rate);
+                                        term_clrlf(&info);
+                                        println!();
+                                        term_up(&info, 4);
                                         if once {
                                             clean_exit(&info);
                                         }
