@@ -58,7 +58,7 @@ Elapsed 37.25s 2306 messages, rate 61.90/s
 
 ^C to exit.
 
-For non-Linux, is may be necessary to define the device node, e.g. FreeBSD:
+However, for non-Linux, it may be necessary to define the device node, e.g. FreeBSD:
 
 ```
 $ msptest /dev/cuaU0
@@ -75,6 +75,26 @@ Voltage: 0.00
 GPS: fix 0, sats 0, lat, lon, alt 0.000000 0.000000 0, spd 0.00 cog 0 hdop 99.99
 Elapsed 48.81s 3020 messages, rate 61.88/s
 ```
+
+Thusly:
+
+```
+# macos
+msptest /dev/cu.usbmodem0x80000001
+
+# Windows
+msptest.exe COM17
+```
+
+## Makefile
+
+As a short cut for `cargo` commands / options, there's a Makefile
+
+* `make build`    :  Builds a release target
+* `make install`  :  Builds a release target, installs to ~/.local/bin
+* `make debug`    :  Builds a debug target
+* `make windows`  :  Cross-compiles a Windows executable on sane host OS
+* `make clean`    :  Clean
 
 ## Licence
 
