@@ -105,7 +105,7 @@ fn main() -> Result<()> {
 
     println!("Serial port: {}", port_name);
     let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(2500))
+        .timeout(Duration::from_millis(1200))
         .open()?;
 
     let ctrl_c_events = ctrl_channel().unwrap();
@@ -124,9 +124,9 @@ fn main() -> Result<()> {
             .unwrap();
 
         let st = Instant::now();
+        let mut upset = 3;
         loop {
             select! {
-
                 recv(ctrl_c_events) -> _ => {
                     clean_exit();
                 }
@@ -171,7 +171,9 @@ fn main() -> Result<()> {
                                 }
                                 msp::MSG_BUILD_INFO => {
                                     if x.ok {
-                                        println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
+                                        if x.len > 19 {
+                                            println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
+                                        }
                                     }
                                     nxt = msp::MSG_BOARD_INFO
                                 }
@@ -197,7 +199,11 @@ fn main() -> Result<()> {
                                             (x.data[2] == 1)
                                         );
                                     }
-                                    nxt = msp::MSG_MISC2;
+                                    nxt = if vers == 2 {
+                                        msp::MSG_MISC2
+                                    } else {
+                                        msp::MSG_ANALOG
+                                    };
                                 }
                                 msp::MSG_MISC2 => {
                                     if x.ok {
@@ -205,6 +211,7 @@ fn main() -> Result<()> {
                                         print!("Uptime: {}s", uptime);
                                         queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
+                                        upset = 4;
                                     }
                                     nxt = msp::MSG_ANALOG 
                                 }
@@ -232,31 +239,37 @@ fn main() -> Result<()> {
                                             u16::from_le_bytes(x.data[12..14].try_into().unwrap()) as f32 / 100.0;
                                         let cog: f32 =
                                             u16::from_le_bytes(x.data[14..16].try_into().unwrap()) as f32 / 10.0;
-                                        let hdop: f32 = if x.len > 16 {
-                                            u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0
-                                        } else {
-                                            99.99
-                                        };
                                         print!(
-                                            "GPS: fix {}, sats {}, {:.6}° {:.6}° {}m, spd {:.2} cog {:.0} hdop {:.2}", fix, nsat, lat, lon, alt, spd, cog, hdop);
+                                            "GPS: fix {}, sats {}, {:.6}° {:.6}° {}m, spd {:.2} cog {:.0}", fix, nsat, lat, lon, alt, spd, cog);
+
+                                        if x.len > 16 {
+                                            let hdop: f32 = u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0;
+                                            print!(" hdop {:.2}", hdop);
+                                        }
+
                                         queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
-                                        nxt = msp::MSG_MISC2;
                                         let dura = st.elapsed();
                                         let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
                                         let rate = msgcnt as f64 / duras;
                                         print!("Elapsed {:.2}s {} messages, rate {:.2}/s", duras, msgcnt, rate);
                                         queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
-                                        queue!(stdout(),  MoveToPreviousLine(4)).unwrap();
+                                        queue!(stdout(),  MoveToPreviousLine(upset)).unwrap();
                                         stdout().flush()?;
-                                        if once {
-                                            clean_exit();
-                                        }
-                                        if slow {
-                                            thread::sleep(time::Duration::from_millis(1000));
-                                        }
                                     }
+
+                                    if once {
+                                        clean_exit();
+                                    }
+                                    if slow {
+                                        thread::sleep(time::Duration::from_millis(1000));
+                                    }
+                                    nxt = if vers == 2 {
+                                        msp::MSG_MISC2
+                                    } else {
+                                        msp::MSG_ANALOG
+                                    };
                                 }
                                 msp::MSG_DEBUGMSG => {
                                     if x.ok {
@@ -265,7 +278,11 @@ fn main() -> Result<()> {
                                         nxt = msp::MSG_IDENT
                                     }
                                 }
-                                _ => println!("Recv: {:#?}", x),
+                                _ => {
+                                    println!("Recv: {:#?}", x);
+                                    clean_exit();
+                                },
+                                       
                             }
                             writer.write_all(&encode_msp_vers(nxt, &[]))?;
                         },

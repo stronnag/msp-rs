@@ -96,6 +96,41 @@ As a short cut for `cargo` commands / options, there's a Makefile
 * `make windows`  :  Cross-compiles a Windows executable on sane host OS
 * `make clean`    :  Clean
 
+## Legacy
+
+### MultiWii
+
+Requires `-m 1` to force MSP v1.
+
+```
+$ msptest -m 1
+Serial port: /dev/ttyUSB0
+MSP Vers: 241, (protocol v1)
+Voltage: 4.20
+GPS: fix 0, sats 0, 0.000000° 0.000000° 0m, spd 0.00 cog 0
+Elapsed 21.64s 1298 messages, rate 59.99/s
+```
+
+### INAV F1 Processor
+
+Note the serial message rate. The changes since 1.7 / 1.8 (increased functionality, changing of task priorities etc.) have not improved serial I/O rates, despite much faster CPUs.
+
+```
+$ msptest /dev/ttyACM1
+Serial port: /dev/ttyACM1
+MSP Vers: 231, (protocol v2)
+Name: BV-CC3D
+API Version: 2.1
+Firmware: INAV
+FW Version: 1.9.254
+Git revsion: e4510e11
+Board: CC3D
+Extant waypoints in FC: 0 of 30, valid false
+Voltage: 0.00
+GPS: fix 0, sats 0, 0.000000° 0.000000° 0m, spd 0.00 cog 0 hdop 0.00
+Elapsed 14.31s 1427 messages, rate 99.69/s
+```
+
 ## Licence
 
 MIT, 0BSD or similar.

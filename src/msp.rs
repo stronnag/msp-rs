@@ -104,27 +104,13 @@ pub struct MSPMsg {
     pub data: Vec<u8>,
 }
 
-/*
-fn timeout_marker(val: u32) {
-    let idx = val % 4;
-    let c: char;
-    match idx {
-        0 => c = '|',
-        1 => c = '/',
-        2 => c = '-',
-        3 => c = '\\',
-        4_u32..=u32::MAX => todo!(),
-    }
-    print!("{}\x08", c);
-    io::stdout().flush().unwrap();
-}
-*/
 pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
     let mut inp: [u8; 1] = [0; 1];
     let mut crc = 0u8;
     let mut count = 0u16;
+    let mut dirnok = false;
 
     loop {
         match port.read(&mut inp) {
@@ -136,6 +122,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                             msg.ok = false;
                             msg.len = 0;
                             msg.cmd = 0;
+                            dirnok = false;
                         }
                     }
                     States::M => {
@@ -146,9 +133,12 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                         }
                     }
                     States::Dirn => match inp[0] {
-                        b'!' => n = States::Len,
+                        b'!' => {
+                            n = States::Len;
+                        },
                         b'>' => {
                             n = States::Len;
+                            dirnok = true;
                         }
                         _ => n = States::Init,
                     },
@@ -156,6 +146,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                         b'!' => n = States::XFlags,
                         b'>' => {
                             n = States::XFlags;
+                            dirnok = true;
                         }
                         _ => n = States::Init,
                     },
@@ -205,7 +196,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                             );
                             msg.ok = false
                         } else {
-                            msg.ok = true
+                            msg.ok = dirnok;
                         }
                         tx.send(msg.clone()).unwrap();
                         n = States::Init;
@@ -239,7 +230,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                             println!("MCRC error on {} {} {}", msg.cmd, crc, inp[0]);
                             msg.ok = false;
                         } else {
-                            msg.ok = true
+                            msg.ok = dirnok;
                         }
                         tx.send(msg.clone()).unwrap();
                         n = States::Init;
