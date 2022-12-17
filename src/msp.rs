@@ -122,137 +122,134 @@ fn timeout_marker(val: u32) {
 pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
-    let mut inp: [u8; 256] = [0; 256];
+    let mut inp: [u8; 1] = [0; 1];
     let mut crc = 0u8;
     let mut count = 0u16;
-//    let mut tcount = 0u32;
 
     loop {
-        match port.read(inp.as_mut_slice()) {
-            Ok(t) => {
-                for j in 0..t {
-                    match n {
-                        States::Init => {
-                            if inp[j] == b'$' {
-                                n = States::M;
-                                msg.ok = false;
-                                msg.len = 0;
-                                msg.cmd = 0;
-                            }
+        match port.read(&mut inp) {
+            Ok(_) => {
+                match n {
+                    States::Init => {
+                        if inp[0] == b'$' {
+                            n = States::M;
+                            msg.ok = false;
+                            msg.len = 0;
+                            msg.cmd = 0;
                         }
-                        States::M => {
-                            n = match inp[j] {
-                                b'M' => States::Dirn,
-                                b'X' => States::XHeader2,
-                                _ => States::Init,
-                            }
+                    }
+                    States::M => {
+                        n = match inp[0] {
+                            b'M' => States::Dirn,
+                            b'X' => States::XHeader2,
+                            _ => States::Init,
                         }
-                        States::Dirn => match inp[j] {
-                            b'!' => n = States::Len,
-                            b'>' => {
-                                n = States::Len;
-                            }
-                            _ => n = States::Init,
-                        },
-                        States::XHeader2 => match inp[j] {
-                            b'!' => n = States::XFlags,
-                            b'>' => {
-                                n = States::XFlags;
-                            }
-                            _ => n = States::Init,
-                        },
-                        States::XFlags => {
-                            crc = crc8_dvb_s2(0, inp[j]);
-                            n = States::XId1;
+                    }
+                    States::Dirn => match inp[0] {
+                        b'!' => n = States::Len,
+                        b'>' => {
+                            n = States::Len;
                         }
-                        States::XId1 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.cmd = inp[j] as u16;
-                            n = States::XId2;
+                        _ => n = States::Init,
+                    },
+                    States::XHeader2 => match inp[0] {
+                        b'!' => n = States::XFlags,
+                        b'>' => {
+                            n = States::XFlags;
                         }
-                        States::XId2 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.cmd |= (inp[j] as u16) << 8;
-                            n = States::XLen1;
+                        _ => n = States::Init,
+                    },
+                    States::XFlags => {
+                        crc = crc8_dvb_s2(0, inp[0]);
+                        n = States::XId1;
+                    }
+                    States::XId1 => {
+                        crc = crc8_dvb_s2(crc, inp[0]);
+                        msg.cmd = inp[0] as u16;
+                        n = States::XId2;
+                    }
+                    States::XId2 => {
+                        crc = crc8_dvb_s2(crc, inp[0]);
+                        msg.cmd |= (inp[0] as u16) << 8;
+                        n = States::XLen1;
+                    }
+                    States::XLen1 => {
+                        crc = crc8_dvb_s2(crc, inp[0]);
+                        msg.len = inp[0] as u16;
+                        n = States::XLen2;
+                    }
+                    States::XLen2 => {
+                        crc = crc8_dvb_s2(crc, inp[0]);
+                        msg.len |= (inp[0] as u16) << 8;
+                        if msg.len > 0 {
+                            n = States::XData;
+                            count = 0;
+                            msg.data = vec![0; msg.len.into()];
+                        } else {
+                            n = States::XChecksum;
                         }
-                        States::XLen1 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.len = inp[j] as u16;
-                            n = States::XLen2;
+                    }
+                    States::XData => {
+                        crc = crc8_dvb_s2(crc, inp[0]);
+                        msg.data[count as usize] = inp[0];
+                        count += 1;
+                        if count == msg.len {
+                            n = States::XChecksum;
                         }
-                        States::XLen2 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.len |= (inp[j] as u16) << 8;
-                            if msg.len > 0 {
-                                n = States::XData;
-                                count = 0;
-                                msg.data = vec![0; msg.len.into()];
-                            } else {
-                                n = States::XChecksum;
-                            }
+                    }
+                    States::XChecksum => {
+                        if crc != inp[0] {
+                            println!(
+                                "XCRC error on {} {} {} l={}",
+                                msg.cmd, crc, inp[0], msg.len
+                            );
+                            msg.ok = false
+                        } else {
+                            msg.ok = true
                         }
-                        States::XData => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.data[count as usize] = inp[j];
-                            count += 1;
-                            if count == msg.len {
-                                n = States::XChecksum;
-                            }
+                        tx.send(msg.clone()).unwrap();
+                        n = States::Init;
+                    }
+                    States::Len => {
+                        msg.len = inp[0] as u16;
+                        crc = inp[0];
+                        n = States::Cmd;
+                    }
+                    States::Cmd => {
+                        msg.cmd = inp[0] as u16;
+                        crc ^= inp[0];
+                        if msg.len == 0 {
+                            n = States::Crc;
+                        } else {
+                            msg.data = vec![0; msg.len.into()];
+                            n = States::Data;
+                            count = 0;
                         }
-                        States::XChecksum => {
-                            if crc != inp[j] {
-                                println!(
-                                    "XCRC error on {} {} {} l={}",
-                                    msg.cmd, crc, inp[j], msg.len
-                                );
-                                msg.ok = false
-                            } else {
-                                msg.ok = true
-                            }
-                            tx.send(msg.clone()).unwrap();
-                            n = States::Init;
+                    }
+                    States::Data => {
+                        msg.data[count as usize] = inp[0];
+                        crc ^= inp[0];
+                        count += 1;
+                        if count == msg.len {
+                            n = States::Crc;
                         }
-                        States::Len => {
-                            msg.len = inp[j] as u16;
-                            crc = inp[j];
-                            n = States::Cmd;
+                    }
+                    States::Crc => {
+                        if crc != inp[0] {
+                            println!("MCRC error on {} {} {}", msg.cmd, crc, inp[0]);
+                            msg.ok = false;
+                        } else {
+                            msg.ok = true
                         }
-                        States::Cmd => {
-                            msg.cmd = inp[j] as u16;
-                            crc ^= inp[j];
-                            if msg.len == 0 {
-                                n = States::Crc;
-                            } else {
-                                msg.data = vec![0; msg.len.into()];
-                                n = States::Data;
-                                count = 0;
-                            }
-                        }
-                        States::Data => {
-                            msg.data[count as usize] = inp[j];
-                            crc ^= inp[j];
-                            count += 1;
-                            if count == msg.len {
-                                n = States::Crc;
-                            }
-                        }
-                        States::Crc => {
-                            if crc != inp[j] {
-                                println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
-                                msg.ok = false;
-                            } else {
-                                msg.ok = true
-                            }
-                            tx.send(msg.clone()).unwrap();
-                            n = States::Init;
-                        }
+                        tx.send(msg.clone()).unwrap();
+                        n = States::Init;
                     }
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::BrokenPipe => return,
             Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-//                timeout_marker(tcount);
-//                tcount += 1;
+            //                timeout_marker(tcount);
+            //                tcount += 1;
             }
             Err(e) => {
                 println!("{:?}", e);

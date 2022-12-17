@@ -1,24 +1,27 @@
 extern crate crossbeam;
 extern crate crossbeam_channel;
 extern crate getopts;
-extern crate terminfo;
 
-use terminfo::{Database, capability as cap};
 use crossbeam_channel::{bounded, unbounded, Receiver, select};
-
 use getopts::Options;
 use std::convert::TryInto;
 use std::env;
-use std::io;
 use std::time::Instant;
 use std::time::Duration;
 use std::thread;
 use std::time;
-use anyhow::Result;
+use std::io::stdout;
+use crossterm::{
+    cursor::{Show, Hide, MoveToPreviousLine},
+    queue,
+    terminal::{Clear, ClearType},
+    Result,
+};
+use std::io::Write;
 
 mod msp;
 
-fn ctrl_channel() -> Result<Receiver<()>, ctrlc::Error> {
+fn ctrl_channel() -> std::result::Result<Receiver<()>, ctrlc::Error> {
     let (sender, receiver) = bounded(100);
     ctrlc::set_handler(move || {
         let _ = sender.send(());
@@ -26,37 +29,15 @@ fn ctrl_channel() -> Result<Receiver<()>, ctrlc::Error> {
     Ok(receiver)
 }
 
-fn term_init(info: &terminfo::Database ) {
-    let curinvis = info.get::<cap::CursorInvisible>().unwrap();
-    curinvis.expand().to(io::stdout()).unwrap();
-}
-
-fn term_reset(info: &terminfo::Database ) {
-    let curvis = info.get::<cap::CursorVisible>().unwrap();
-    curvis.expand().to(io::stdout()).unwrap();
-}
-
-fn term_up(info: &terminfo::Database, num: i32) {
-    let cursup =  info.get::<cap::CursorUp>().unwrap();
-    for _n in 0..num {  
-        cursup.expand().to(io::stdout()).unwrap();
-    }
-}
-
-fn term_clrlf(info: &terminfo::Database) {
-    let clreol = info.get::<cap::ClrEol>().unwrap();
-    clreol.expand().to(io::stdout()).unwrap();
+fn clean_exit() {
+    queue!(stdout(),Show).unwrap();
+    println!("\n\n\n");
+    std::process::exit(0);
 }
 
 fn print_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} [options] DEVICE", program);
+    let brief = format!("Usage: {} [options] [device-node]", program);
     print!("{}", opts.usage(&brief));
-}
-
-fn clean_exit(info: &terminfo::Database) {
-    term_reset(info);
-    println!("\n\n\n");
-    std::process::exit(0);
 }
 
 fn main() -> Result<()> {
@@ -124,16 +105,15 @@ fn main() -> Result<()> {
 
     println!("Serial port: {}", port_name);
     let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(1200))
+        .timeout(Duration::from_millis(2500))
         .open()?;
 
-    let ctrl_c_events = ctrl_channel()?;
-    let info = Database::from_env()?;
-    term_init(&info);
+    let ctrl_c_events = ctrl_channel().unwrap();
     
     let mut writer = port.try_clone()?;
     let (snd, rcv) = unbounded();
-
+    queue!(stdout(),Hide).unwrap();
+    
     crossbeam::scope(|s| {
         s.spawn(|_| {
             msp::reader(&mut *port, snd);
@@ -148,7 +128,7 @@ fn main() -> Result<()> {
             select! {
 
                 recv(ctrl_c_events) -> _ => {
-                    clean_exit(&info);
+                    clean_exit();
                 }
 
                 recv(rcv) -> res => {
@@ -223,7 +203,7 @@ fn main() -> Result<()> {
                                     if x.ok {
                                         let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
                                         print!("Uptime: {}s", uptime);
-                                        term_clrlf(&info);
+                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
                                     }
                                     nxt = msp::MSG_ANALOG 
@@ -233,7 +213,7 @@ fn main() -> Result<()> {
                                     if x.ok {
                                         let volts: f32 = x.data[0] as f32 / 10.0;
                                         print!("Voltage: {:.2}", volts);
-                                        term_clrlf(&info);
+                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
                                     }
                                     nxt = msp::MSG_RAW_GPS;
@@ -258,19 +238,20 @@ fn main() -> Result<()> {
                                             99.99
                                         };
                                         print!(
-                                            "GPS: fix {}, sats {}, lat, lon, alt {:.6} {:.6} {}, spd {:.2} cog {:.0} hdop {:.2}", fix, nsat, lat, lon, alt, spd, cog, hdop);
-                                        term_clrlf(&info);
+                                            "GPS: fix {}, sats {}, {:.6}° {:.6}° {}m, spd {:.2} cog {:.0} hdop {:.2}", fix, nsat, lat, lon, alt, spd, cog, hdop);
+                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
                                         nxt = msp::MSG_MISC2;
                                         let dura = st.elapsed();
                                         let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
                                         let rate = msgcnt as f64 / duras;
                                         print!("Elapsed {:.2}s {} messages, rate {:.2}/s", duras, msgcnt, rate);
-                                        term_clrlf(&info);
+                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
                                         println!();
-                                        term_up(&info, 4);
+                                        queue!(stdout(),  MoveToPreviousLine(4)).unwrap();
+                                        stdout().flush()?;
                                         if once {
-                                            clean_exit(&info);
+                                            clean_exit();
                                         }
                                         if slow {
                                             thread::sleep(time::Duration::from_millis(1000));

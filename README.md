@@ -4,7 +4,7 @@
 
 In the unlikely event that you're curious about using rust to commuicate with a MSP flight controller (for example [inav](https://github.com/iNavFlight/inav), betaflight, multiwii even), then here's a trivial example of rust asynchronous MSP (using a "channels" pattern).
 
-Note that this is about day 2 of the author's rust adventure, it may be non-idiomatic, naive etc. PRs welcome.
+Note that this is about day 3 of the author's on/off rust adventure, it may be non-idiomatic, naive etc. PRs welcome.
 
 ## Example
 
@@ -58,12 +58,10 @@ Elapsed 37.25s 2306 messages, rate 61.90/s
 
 ^C to exit.
 
-## Terminfo
-
-`msptest` uses `terminfo` for cursor addressing. On some platforms, it may be necessary to define where to find the `terminfo` data. e.g. FreeBSD, also defining the device node:
+For non-Linux, is may be necessary to define the device node, e.g. FreeBSD:
 
 ```
-$ TERMINFO=/usr/local/share/terminfo msptest /dev/cuaU0
+$ msptest /dev/cuaU0
 Serial port: /dev/cuaU0
 Name: BenchyMcTesty
 API Version: 2.4
@@ -78,25 +76,6 @@ GPS: fix 0, sats 0, lat, lon, alt 0.000000 0.000000 0, spd 0.00 cog 0 hdop 99.99
 Elapsed 48.81s 3020 messages, rate 61.88/s
 ```
 
-### Non-POSIX OS
-
-On non-POSIX OS (i.e. Windows), it will be necessary to define both `TERM` and `TERMINFO` and provide a TERMINFO data file. The canonical `ms-terminal` should work in Windows Terminal, for example (powershell):
-
-Once:
-```
-mkdir terminfo
-mkdir terminfo/m
-cp <somepath>\ms-terminal terminfo/m
-```
-Then, something like:
-
-```
-$env:TERM = 'ms-terminal`
-$env:TERMINFO = <pathto>\terminfo
-msptest COM3
-```
-
-
 ## Licence
 
-MIT or similar.
+MIT, 0BSD or similar.
