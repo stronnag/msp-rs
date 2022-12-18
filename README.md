@@ -86,6 +86,8 @@ msptest /dev/cu.usbmodem0x80000001
 msptest.exe COM17
 ```
 
+Note that on Windows, the rust `serialport` performance is less than impressive.
+
 ## Makefile
 
 As a short cut for `cargo` commands / options, there's a Makefile
