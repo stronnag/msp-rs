@@ -47,9 +47,10 @@ fn main() -> Result<()> {
     let mut slow = false;
     let mut once = false;    
     let mut msgcnt = 0;
-    
+    let mut timeout: u64 = 1000;
     let mut opts = Options::new();
     opts.optopt("m", "mspvers", "set msp version", "2");
+    opts.optopt("t", "timeout", "set serial timeout (u/s)", "NUM");
     opts.optflag("1", "once", "exit after one iteration");
     opts.optflag("s", "slow", "slow mode");
     opts.optflag("h", "help", "print this help menu");
@@ -71,6 +72,14 @@ fn main() -> Result<()> {
 
     if matches.opt_present("1") {
         once = true;
+    }
+
+    match matches.opt_get::<u64>("t") {
+        Ok(p) => match p {
+            Some(px) => timeout = px,
+            None => (),
+        },
+        Err(_) => (),
     }
 
     let s = matches.opt_str("m");
@@ -105,7 +114,7 @@ fn main() -> Result<()> {
 
     println!("Serial port: {}", port_name);
     let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(1200))
+        .timeout(Duration::from_micros(timeout))
         .open()?;
 
     let ctrl_c_events = ctrl_channel().unwrap();
