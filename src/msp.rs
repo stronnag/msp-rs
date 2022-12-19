@@ -13,6 +13,8 @@ pub const MSG_WP_GETINFO: u16 = 20;
 pub const MSG_RAW_GPS: u16 = 106;
 pub const MSG_ANALOG: u16 = 110;
 pub const MSG_DEBUGMSG: u16 = 253;
+pub const MSG_STATUS_EX:  u16 = 150;
+pub const MSG_INAV_STATUS: u16 = 0x200;
 pub const MSG_MISC2: u16 = 0x203a;
 
 fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {

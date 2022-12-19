@@ -10,16 +10,138 @@ use std::time::Instant;
 use std::time::Duration;
 use std::thread;
 use std::time;
-use std::io::stdout;
 use crossterm::{
-    cursor::{Show, Hide, MoveToPreviousLine},
-    queue,
-    terminal::{Clear, ClearType},
-    Result,
+    cursor::*,
+    execute,
+    style::*,
+    terminal::{size, Clear, ClearType},
+//    terminal::{enable_raw_mode,disable_raw_mode},
+    ExecutableCommand, Result,
 };
-use std::io::Write;
-
+use iota::iota;
+use std::io::stdout;
 mod msp;
+
+iota! {
+    const IY_PORT : u16 = 4 + iota;
+    , IY_MW
+        , IY_NAME
+        , IY_APIV
+        , IY_FC
+        , IY_FCVERS
+        , IY_BUILD
+        , IY_BOARD
+        , IY_WPINFO
+        , IY_UPTIME
+        , IY_ANALOG
+        , IY_GPS
+        , IY_ARM
+        , IY_RATE
+}
+
+struct Prompt {
+    y: u16,
+    s: &'static str,
+}
+
+
+const UIPROMPTS: [Prompt; 14] = [
+    Prompt {
+        y: IY_PORT,
+        s: "Port",
+    },
+    Prompt {
+        y: IY_MW,
+        s: "MW Vers",
+    },
+    Prompt {
+        y: IY_NAME,
+        s: "Name",
+    },
+    Prompt {
+        y: IY_APIV,
+        s: "API Vers",
+    },
+    Prompt { y: IY_FC, s: "FC" },
+    Prompt {
+        y: IY_FCVERS,
+        s: "FC Vers",
+    },
+    Prompt {
+        y: IY_BUILD,
+        s: "Build",
+    },
+    Prompt {
+        y: IY_BOARD,
+        s: "Board",
+    },
+    Prompt {
+        y: IY_WPINFO,
+        s: "WP Info",
+    },
+    Prompt {
+        y: IY_UPTIME,
+        s: "Uptime",
+    },
+
+    Prompt {
+        y: IY_ANALOG,
+        s: "Power",
+    },
+    Prompt {
+        y: IY_GPS,
+        s: "GPS",
+    },
+    Prompt {
+        y: IY_ARM,
+        s: "Arming",
+    },
+    Prompt {
+        y: IY_RATE,
+        s: "Rate",
+    },
+];
+
+fn outbase(y: u16, val: &str) -> Result<()> {
+    stdout()
+        .execute(MoveTo(0, y))?
+        .execute(Print(val))?
+        .execute(Clear(ClearType::UntilNewLine))?;
+    Ok(())
+}
+
+fn outprompt(y: u16, val: &str) -> Result<()> {
+    stdout()
+        .execute(MoveTo(0, y))?
+        .execute(Print(val))?
+        .execute(MoveTo(8, y))?
+        .execute(Print(":"))?
+        .execute(MoveTo(10, y))?
+        .execute(Print("---"))?
+        .execute(Clear(ClearType::UntilNewLine))?;
+    Ok(())
+}
+
+fn outvalue(y: u16, val: &str) -> Result<()> {
+    stdout()
+        .execute(MoveTo(10, y))?
+        .execute(SetAttribute(Attribute::Bold))?
+        .execute(Print(val))?
+        .execute(SetAttribute(Attribute::Reset))?
+        .execute(Clear(ClearType::UntilNewLine))?;
+    Ok(())
+}
+
+fn outtitle(val: &str) -> Result<()> {
+    stdout()
+        .execute(MoveTo(30, 2))?
+        .execute(SetAttribute(Attribute::Bold))?
+        .execute(SetAttribute(Attribute::Reverse))?
+        .execute(Print(val))?
+        .execute(SetAttribute(Attribute::Reset))?
+        .execute(Clear(ClearType::UntilNewLine))?;
+    Ok(())
+}
 
 fn ctrl_channel() -> std::result::Result<Receiver<()>, ctrlc::Error> {
     let (sender, receiver) = bounded(100);
@@ -29,9 +151,9 @@ fn ctrl_channel() -> std::result::Result<Receiver<()>, ctrlc::Error> {
     Ok(receiver)
 }
 
-fn clean_exit() {
-    queue!(stdout(),Show).unwrap();
-    println!("\n\n\n");
+fn clean_exit(rows: u16) {
+    outbase(rows-1,"").unwrap();
+    execute!(stdout(), Show).unwrap();
     std::process::exit(0);
 }
 
@@ -49,8 +171,8 @@ fn main() -> Result<()> {
     let mut msgcnt = 0;
     let mut timeout: u64 = 1000;
     let mut opts = Options::new();
-    opts.optopt("m", "mspvers", "set msp version", "2");
-    opts.optopt("t", "timeout", "set serial timeout (u/s)", "NUM");
+    opts.optopt("m", "mspvers", "set msp version", "(2)");
+    opts.optopt("t", "timeout", "set serial timeout (u/s)", "(1000)");
     opts.optflag("1", "once", "exit after one iteration");
     opts.optflag("s", "slow", "slow mode");
     opts.optflag("h", "help", "print this help menu");
@@ -112,8 +234,7 @@ fn main() -> Result<()> {
         false => matches.free[0].clone(),
     };
 
-    println!("Serial port: {}", port_name);
-    let mut port = serialport::new(port_name, 115_200)
+    let mut port = serialport::new(&port_name, 115_200)
         .timeout(Duration::from_micros(timeout))
         .open()?;
 
@@ -121,7 +242,20 @@ fn main() -> Result<()> {
     
     let mut writer = port.try_clone()?;
     let (snd, rcv) = unbounded();
-    queue!(stdout(),Hide).unwrap();
+   
+    let (_cols, rows) = size()?;
+
+//    enable_raw_mode()?;
+    execute!(stdout(), Hide)?;
+    execute!(stdout(), Clear(ClearType::All))?;
+
+    outtitle("MSP Test Viewer")?;
+    outbase(rows - 1, "Ctrl-C to exit")?;
+
+    for i in 0..UIPROMPTS.len() {
+        outprompt(UIPROMPTS[i].y, UIPROMPTS[i].s)?;
+    }
+    outvalue(IY_PORT, &port_name)?;
     
     crossbeam::scope(|s| {
         s.spawn(|_| {
@@ -133,11 +267,10 @@ fn main() -> Result<()> {
             .unwrap();
 
         let st = Instant::now();
-        let mut upset = 3;
         loop {
             select! {
                 recv(ctrl_c_events) -> _ => {
-                    clean_exit();
+                    clean_exit(rows);
                 }
 
                 recv(rcv) -> res => {
@@ -149,39 +282,39 @@ fn main() -> Result<()> {
                                 msp::MSG_IDENT => {
                                     if x.ok {
                                         if x.len > 0 {
-                                            println!("MSP Vers: {}, (protocol v{})", x.data[0], vers);
+                                            outvalue(IY_MW, &format!("MSP Vers: {}, (protocol v{})", x.data[0], vers))?;
                                         }
                                     }
                                     nxt = msp::MSG_NAME
                                 }
                                 msp::MSG_NAME => {
                                     if x.ok {
-                                        println!("Name: {}", String::from_utf8_lossy(&x.data));
+                                        outvalue(IY_NAME, &String::from_utf8_lossy(&x.data))?;
                                     }
                                     nxt = msp::MSG_API_VERSION
                                 }
                                 msp::MSG_API_VERSION => {
                                     if x.ok && x.len > 2 {
-                                        println!("API Version: {}.{}", x.data[1], x.data[2]);
+                                        outvalue(IY_APIV, &format!("API Version: {}.{}", x.data[1], x.data[2]))?;
                                     }
                                     nxt = msp::MSG_FC_VARIANT
                                 }
                                 msp::MSG_FC_VARIANT => {
                                     if x.ok {
-                                        println!("Firmware: {}", String::from_utf8_lossy(&x.data[0..4]));
+                                        outvalue(IY_FC, &String::from_utf8_lossy(&x.data[0..4]))?;
                                     }
                                     nxt = msp::MSG_FC_VERSION
                                 }
                                 msp::MSG_FC_VERSION => {
                                     if x.ok {
-                                        println!("FW Version: {}.{}.{}", x.data[0], x.data[1], x.data[2]);
+                                        outvalue(IY_FCVERS, &format!("{}.{}.{}", x.data[0], x.data[1], x.data[2]))?;
                                     }
                                     nxt = msp::MSG_BUILD_INFO
                                 }
                                 msp::MSG_BUILD_INFO => {
                                     if x.ok {
                                         if x.len > 19 {
-                                            println!("Git revsion: {}", String::from_utf8_lossy(&x.data[19..]));
+                                            outvalue(IY_BUILD, &String::from_utf8_lossy(&x.data[19..]))?;
                                         }
                                     }
                                     nxt = msp::MSG_BOARD_INFO
@@ -192,21 +325,21 @@ fn main() -> Result<()> {
                                             String::from_utf8_lossy(&x.data[9..])
                                         } else {
                                             String::from_utf8_lossy(&x.data[0..4])
-                                        }
-                                        .to_string();
-                                        println!("Board: {}", board);
+                                        };
+
+                                        outvalue(IY_BOARD, &board)?;
                                     }
                                     nxt = msp::MSG_WP_GETINFO
                                 }
                                 
                                 msp::MSG_WP_GETINFO => {
                                     if x.ok {
-                                        println!(
+                                        outvalue(IY_WPINFO, &format!(
                                             "Extant waypoints in FC: {} of {}, valid {}",
                                             x.data[3],
                                             x.data[1],
                                             (x.data[2] == 1)
-                                        );
+                                        ))?;
                                     }
                                     nxt = if vers == 2 {
                                         msp::MSG_MISC2
@@ -217,10 +350,7 @@ fn main() -> Result<()> {
                                 msp::MSG_MISC2 => {
                                     if x.ok {
                                         let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
-                                        print!("Uptime: {}s", uptime);
-                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
-                                        println!();
-                                        upset = 4;
+                                        outvalue(IY_UPTIME, &format!("Uptime: {}s", uptime))?;
                                     }
                                     nxt = msp::MSG_ANALOG 
                                 }
@@ -228,14 +358,32 @@ fn main() -> Result<()> {
                                 msp::MSG_ANALOG => {
                                     if x.ok {
                                         let volts: f32 = x.data[0] as f32 / 10.0;
-                                        print!("Voltage: {:.2}", volts);
-                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
-                                        println!();
+                                        outvalue(IY_ANALOG, &format!("{:.2} volts", volts))?;
                                     }
-                                    nxt = msp::MSG_RAW_GPS;
+                                    if vers == 2 {
+                                        nxt = msp::MSG_INAV_STATUS;
+                                    } else {
+                                        nxt = msp::MSG_STATUS_EX;
+                                    }
                                 }
+
+                                msp::MSG_INAV_STATUS => {
+                                    if x.ok {
+                                        let armf = u32::from_le_bytes(x.data[9..13].try_into().unwrap());
+                                        outvalue(IY_ARM, &format!("0x{:x}", armf))?;
+                                        nxt = msp::MSG_RAW_GPS;
+                                    } else {
+                                        nxt = msp::MSG_STATUS_EX;
+                                    }
+                                 }
+                                
+                                msp::MSG_STATUS_EX => {
+                                    let armf = u16::from_le_bytes(x.data[13..15].try_into().unwrap());
+                                    outvalue(IY_ARM, &format!("0x{:x}", armf))?;
+                                    nxt = msp::MSG_RAW_GPS;
+                                 }
+                                
                                 msp::MSG_RAW_GPS => {
-                                    // included as a more complex example
                                     if x.ok {
                                         let fix = x.data[0];
                                         let nsat = x.data[1];
@@ -248,28 +396,24 @@ fn main() -> Result<()> {
                                             u16::from_le_bytes(x.data[12..14].try_into().unwrap()) as f32 / 100.0;
                                         let cog: f32 =
                                             u16::from_le_bytes(x.data[14..16].try_into().unwrap()) as f32 / 10.0;
-                                        print!(
-                                            "GPS: fix {}, sats {}, {:.6}° {:.6}° {}m, spd {:.2} cog {:.0}", fix, nsat, lat, lon, alt, spd, cog);
-
+                                        let mut s = format!(
+                                            "fix {}, sats {}, {:.6}° {:.6}° {}m, {:.0}m/s {:.0}°", fix, nsat, lat, lon, alt, spd, cog);
                                         if x.len > 16 {
                                             let hdop: f32 = u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0;
-                                            print!(" hdop {:.2}", hdop);
+                                            let s1 = format!(" hdop {:.2}", hdop);
+                                            s = s + &s1;
                                         }
 
-                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
-                                        println!();
+                                        outvalue(IY_GPS, &s)?;
                                         let dura = st.elapsed();
                                         let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
                                         let rate = msgcnt as f64 / duras;
-                                        print!("Elapsed {:.2}s {} messages, rate {:.2}/s", duras, msgcnt, rate);
-                                        queue!(stdout(),  Clear(ClearType::UntilNewLine))?;
-                                        println!();
-                                        queue!(stdout(),  MoveToPreviousLine(upset)).unwrap();
-                                        stdout().flush()?;
+                                        outvalue(IY_RATE, &format!("Elapsed {:.2}s {} messages, rate {:.2}/s", duras, msgcnt, rate))?;
+
                                     }
 
                                     if once {
-                                        clean_exit();
+                                        clean_exit(rows);
                                     }
                                     if slow {
                                         thread::sleep(time::Duration::from_millis(1000));
@@ -289,7 +433,7 @@ fn main() -> Result<()> {
                                 }
                                 _ => {
                                     println!("Recv: {:#?}", x);
-                                    clean_exit();
+                                    clean_exit(rows);
                                 },
                                        
                             }
