@@ -161,13 +161,36 @@ fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options] [device-node]", program);
     print!("{}", opts.usage(&brief));
 }
+fn get_serial_device(defdev: &str, testcvt: bool) -> String {
+    let pname = match serialport::available_ports() {
+        Ok(ports) => {
+            for p in ports {
+                match p.port_type {
+                    serialport::SerialPortType::UsbPort(pt) => {
+                        if (pt.vid == 0x0483 && pt.pid == 0x5740) ||
+                            (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60) ||
+                             (pt.vid == 1659 && pt.pid == 8963)) {
+                            return p.port_name.clone();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            defdev.to_string()
+        }
+        Err(_e) => {
+            std::process::exit(1);
+        }
+    };
+    pname
+}
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
     let mut vers = 2;
     let mut slow = false;
-    let mut once = false;    
+    let mut once = false;
     let mut msgcnt = 0;
     let mut timeout: u64 = 1000;
     let mut opts = Options::new();
@@ -210,6 +233,12 @@ fn main() -> Result<()> {
         None => (),
     }
 
+    let defdev = if !matches.free.is_empty() {
+        &matches.free[0]
+    } else {
+        ""
+    };
+
     let encode_msp_vers = |cmd, payload| {
         let vv = match vers {
             1 => msp::encode_msp(cmd, payload),
@@ -218,31 +247,18 @@ fn main() -> Result<()> {
         vv
     };
 
-    let port_name = match matches.free.is_empty() {
-        true => match serialport::available_ports() {
-            Ok(ports) => match ports.len() {
-                0 => {
-                    println!("No serial ports found.");
-                    return Ok(());
-                }
-                _ => ports[0].port_name.clone(),
-            },
-            Err(_e) => {
-                std::process::exit(1);
-            }
-        },
-        false => matches.free[0].clone(),
-    };
-
+    let port_name = get_serial_device(defdev, true);
     let mut port = serialport::new(&port_name, 115_200)
         .timeout(Duration::from_micros(timeout))
         .open()?;
 
+    port.clear(serialport::ClearBuffer::All)?;
+
     let ctrl_c_events = ctrl_channel().unwrap();
-    
+
     let mut writer = port.try_clone()?;
     let (snd, rcv) = unbounded();
-   
+
     let (_cols, rows) = size()?;
 
 //    enable_raw_mode()?;
@@ -256,7 +272,7 @@ fn main() -> Result<()> {
         outprompt(UIPROMPTS[i].y, UIPROMPTS[i].s)?;
     }
     outvalue(IY_PORT, &port_name)?;
-    
+
     crossbeam::scope(|s| {
         s.spawn(|_| {
             msp::reader(&mut *port, snd);
@@ -331,7 +347,7 @@ fn main() -> Result<()> {
                                     }
                                     nxt = msp::MSG_WP_GETINFO
                                 }
-                                
+
                                 msp::MSG_WP_GETINFO => {
                                     if x.ok {
                                         outvalue(IY_WPINFO, &format!(
@@ -352,9 +368,9 @@ fn main() -> Result<()> {
                                         let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
                                         outvalue(IY_UPTIME, &format!("Uptime: {}s", uptime))?;
                                     }
-                                    nxt = msp::MSG_ANALOG 
+                                    nxt = msp::MSG_ANALOG
                                 }
-                                
+
                                 msp::MSG_ANALOG => {
                                     if x.ok {
                                         let volts: f32 = x.data[0] as f32 / 10.0;
@@ -370,19 +386,21 @@ fn main() -> Result<()> {
                                 msp::MSG_INAV_STATUS => {
                                     if x.ok {
                                         let armf = u32::from_le_bytes(x.data[9..13].try_into().unwrap());
-                                        outvalue(IY_ARM, &format!("0x{:x}", armf))?;
+                                        let s = get_armfails(armf);
+                                        outvalue(IY_ARM, &s)?;
                                         nxt = msp::MSG_RAW_GPS;
                                     } else {
                                         nxt = msp::MSG_STATUS_EX;
                                     }
                                  }
-                                
+
                                 msp::MSG_STATUS_EX => {
                                     let armf = u16::from_le_bytes(x.data[13..15].try_into().unwrap());
-                                    outvalue(IY_ARM, &format!("0x{:x}", armf))?;
+                                    let s = get_armfails(armf as u32);
+                                    outvalue(IY_ARM, &s)?;
                                     nxt = msp::MSG_RAW_GPS;
                                  }
-                                
+
                                 msp::MSG_RAW_GPS => {
                                     if x.ok {
                                         let fix = x.data[0];
@@ -435,14 +453,65 @@ fn main() -> Result<()> {
                                     println!("Recv: {:#?}", x);
                                     clean_exit(rows);
                                 },
-                                       
+
                             }
                             writer.write_all(&encode_msp_vers(nxt, &[]))?;
                         },
                         Err(e) => panic!("{}",e),
                     }
-                } 
+                }
             }
-        } 
+        }
     }).unwrap() // crossbeam
+}
+
+fn get_armfails(reason: u32) -> String {
+    const ARMFAILS: [&'static str; 32] = [
+        "",
+        "",
+        "Armed",
+        "",
+        "",
+        "",
+        "",
+        "F/S",
+        "Level",
+        "Calibrate",
+        "Overload",
+        "NavUnsafe",
+        "MagCal",
+        "AccCal",
+        "ArmSwitch",
+        "H/WFail",
+        "BoxF/S",
+        "BoxKill",
+        "RCLink",
+        "Throttle",
+        "CLI",
+        "CMS",
+        "OSD",
+        "Roll/Pitch",
+        "Autotrim",
+        "OOM",
+        "Settings",
+        "PWM Out",
+        "PreArm",
+        "DSHOTBeep",
+        "Land",
+        "Other",
+    ];
+
+    let s: String;
+    if reason == 0 {
+        s = "Ready to arm".to_string()
+    } else {
+        let mut v: Vec<String> = Vec::new();
+        for i in 0..ARMFAILS.len() {
+            if ((reason & (1 << i)) != 0) && ARMFAILS[i] != "" {
+                v.push(ARMFAILS[i].to_string());
+            }
+        }
+        s = v.join(" ");
+    }
+    return s;
 }
