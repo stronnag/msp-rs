@@ -16,6 +16,7 @@ pub const MSG_DEBUGMSG: u16 = 253;
 pub const MSG_STATUS_EX:  u16 = 150;
 pub const MSG_INAV_STATUS: u16 = 0x200;
 pub const MSG_MISC2: u16 = 0x203a;
+pub const MSG_FAIL: u16 = 0xffff;
 
 fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {
     c ^= a;
@@ -241,19 +242,14 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                     }
                 }
             }
-            Err(ref e) if e.kind() == io::ErrorKind::BrokenPipe => return,
             Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-            //                timeout_marker(tcount);
-            //                tcount += 1;
             }
-            Err(e) => {
-                panic!("{:?}", e);
-                /*
+            Err(_e) => {
+                msg.cmd = MSG_FAIL;
                 msg.len = 0;
                 msg.ok = false;
                 tx.send(msg.clone()).unwrap();
-                n = States::Init
-                */
+                return 
             }
         }
     }
