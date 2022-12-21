@@ -392,7 +392,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
         }
         msp::MSG_API_VERSION => {
             if x.ok && x.len > 2 {
-                outvalue(IY_APIV, &format!("API Version: {}.{} ({})", x.data[1], x.data[2],vers)).unwrap();
+                outvalue(IY_APIV, &format!("{}.{} ({})", x.data[1], x.data[2], vers)).unwrap();
             }
             nxt = msp::MSG_FC_VARIANT
         }
@@ -411,7 +411,11 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
         msp::MSG_BUILD_INFO => {
             if x.ok {
                 if x.len > 19 {
-                    outvalue(IY_BUILD, &String::from_utf8_lossy(&x.data[19..])).unwrap();
+                    let txt = format!("{} {} ({})", 
+                                      &String::from_utf8_lossy(&x.data[0..11]),
+                                      &String::from_utf8_lossy(&x.data[11..19]),
+                                      &String::from_utf8_lossy(&x.data[19..]));
+                    outvalue(IY_BUILD, &txt).unwrap();
                 }
             }
             nxt = msp::MSG_BOARD_INFO
@@ -432,7 +436,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
         msp::MSG_WP_GETINFO => {
             if x.ok {
                 outvalue(IY_WPINFO, &format!(
-                    "Extant waypoints in FC: {} of {}, valid {}",
+                    "{} of {}, valid {}",
                     x.data[3],
                     x.data[1],
                     (x.data[2] == 1)
@@ -447,7 +451,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
         msp::MSG_MISC2 => {
             if x.ok {
                 let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
-                outvalue(IY_UPTIME, &format!("Uptime: {}s", uptime)).unwrap();
+                outvalue(IY_UPTIME, &format!("{}s", uptime)).unwrap();
             }
             nxt = msp::MSG_ANALOG
         }
@@ -455,7 +459,8 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
         msp::MSG_ANALOG => {
             if x.ok {
                 let volts: f32 = x.data[0] as f32 / 10.0;
-                outvalue(IY_ANALOG, &format!("{:.2} volts", volts)).unwrap();
+                let amps: f32 =  u16::from_le_bytes(x.data[5..7].try_into().unwrap()) as f32 / 100.0;
+                outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
             }
             if vers == 2 {
                 nxt = msp::MSG_INAV_STATUS;
@@ -507,7 +512,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
                 let dura = st.elapsed();
                 let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
                 let rate = msgcnt as f64 / duras;
-                outvalue(IY_RATE, &format!("Elapsed {:.2}s {} messages, rate {:.2}/s", duras, msgcnt, rate)).unwrap();
+                outvalue(IY_RATE, &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate)).unwrap();
             }
 
             if once {
