@@ -286,7 +286,6 @@ fn main() -> Result<()> {
     execute!(stdout(), Hide)?;
     execute!(stdout(), Clear(ClearType::All))?;
 
-
     'a:    loop {
         let pname: String;
         if defdev == "auto" {
@@ -393,7 +392,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
         }
         msp::MSG_API_VERSION => {
             if x.ok && x.len > 2 {
-                outvalue(IY_APIV, &format!("API Version: {}.{}", x.data[1], x.data[2])).unwrap();
+                outvalue(IY_APIV, &format!("API Version: {}.{} ({})", x.data[1], x.data[2],vers)).unwrap();
             }
             nxt = msp::MSG_FC_VARIANT
         }
@@ -586,6 +585,7 @@ fn get_armfails(reason: u32) -> String {
                 v.push(ARMFAILS[i].to_string());
             }
         }
+        v.push(format!("(0x{:x})", reason));
         s = v.join(" ");
     }
     return s;

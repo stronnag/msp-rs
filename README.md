@@ -133,6 +133,30 @@ GPS: fix 0, sats 0, 0.000000° 0.000000° 0m, spd 0.00 cog 0 hdop 0.00
 Elapsed 14.31s 1427 messages, rate 99.69/s
 ```
 
+## TUI Display
+
+The example has now migrated to a TUI application:
+
+```
+
+                              MSP Test Viewer
+
+Port    : /dev/ttyACM0
+MW Vers : ---
+Name    : BenchyMcTesty
+API Vers: API Version: 2.4
+FC      : INAV
+FC Vers : 6.0.0
+Build   : d59b1036
+Board   : WINGFC
+WP Info : Extant waypoints in FC: 0 of 120, valid false
+Uptime  : Uptime: 204s
+Power   : 0.00 volts
+GPS     : fix 0, sats 0, 0.000000° 0.000000° 0m, 0m/s 0° hdop 99.99
+Arming  : NavUnsafe H/WFail
+Rate    : Elapsed 11.90s 738 messages, rate 62.00/s
+```
+
 ## Licence
 
 MIT, 0BSD or similar.
