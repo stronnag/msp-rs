@@ -156,6 +156,9 @@ GPS     : fix 0, sats 0, 0.000000° 0.000000° 0m, 0m/s 0° hdop 99.99
 Arming  : NavUnsafe H/WFail
 Rate    : Elapsed 11.90s 738 messages, rate 62.00/s
 ```
+## Discussion
+
+There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest.
 
 ## Licence
 
