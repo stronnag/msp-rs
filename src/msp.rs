@@ -1,6 +1,5 @@
 use serialport::SerialPort;
 use std::io;
-use iota::iota;
 
 pub const MSG_IDENT: u16 = 100;
 pub const MSG_NAME: u16 = 10;
@@ -17,18 +16,20 @@ pub const MSG_STATUS_EX:  u16 = 150;
 pub const MSG_INAV_STATUS: u16 = 0x2000;
 pub const MSG_MISC2: u16 = 0x203a;
 
-iota! {
-    pub const MSP_OK: u8 = iota;
-    , MSP_CRC
-        , MSP_DIRN
-        , MSP_FAIL
+#[derive(Debug, Default,Clone)]
+pub enum MSPRes {
+    MspOk,
+    MspCrc,
+    MspDirn,
+    #[default]
+    MspFail,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct MSPMsg {
     pub len: u16,
     pub cmd: u16,
-    pub ok: u8,
+    pub ok: MSPRes,
     pub data: Vec<u8>,
 }
 
@@ -129,7 +130,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                         States::Init => {
                             if inp[j] == b'$' {
                                 n = States::M;
-                                msg.ok = MSP_FAIL;
+                                msg.ok = MSPRes::MspFail;
                                 msg.len = 0;
                                 msg.cmd = 0;
                                 dirnok = false;
@@ -204,12 +205,12 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                                     "XCRC error on {} {} {} l={}",
                                     msg.cmd, crc, inp[j], msg.len
                                 );
-                                msg.ok = MSP_CRC
+                                msg.ok = MSPRes::MspCrc
                             } else {
                                 msg.ok = if dirnok {
-                                    MSP_OK
+                                    MSPRes::MspOk
                                 } else {
-                                    MSP_DIRN
+                                    MSPRes::MspDirn
                                 };
                             }
                             tx.send(msg.clone()).unwrap();
@@ -242,12 +243,12 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                         States::Crc => {
                             if crc != inp[j] {
                                 println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
-                                msg.ok = MSP_CRC;
+                                msg.ok = MSPRes::MspCrc;
                             } else {
                                 msg.ok = if dirnok {
-                                    MSP_OK
+                                    MSPRes::MspOk
                                 } else {
-                                    MSP_DIRN
+                                    MSPRes::MspDirn
                                 };
                             }
                             tx.send(msg.clone()).unwrap();
@@ -261,7 +262,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
             Err(_e) => {
                 msg.cmd = 0;
                 msg.len = 0;
-                msg.ok = MSP_FAIL;
+                msg.ok = MSPRes::MspFail;
                 tx.send(msg.clone()).unwrap();
                 return 
             }

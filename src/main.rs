@@ -350,13 +350,13 @@ fn main() -> Result<()> {
                                 msgcnt += 1;
                             }
                             match x.ok {
-                                msp::MSP_OK => {
+                                msp::MSPRes::MspOk => {
                                     nxt = handle_msp(st, x, msgcnt, vers, slow);
                                 },
-                                msp::MSP_CRC => {
+                                msp::MSPRes::MspCrc => {
                                     nxt = msp::MSG_IDENT;
                                 },
-                                msp::MSP_DIRN => {
+                                msp::MSPRes::MspDirn => {
                                     nxt = match x.cmd {
                                         msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
                                         msp::MSG_IDENT => msp::MSG_NAME,
@@ -364,11 +364,10 @@ fn main() -> Result<()> {
                                         _ => msp::MSG_IDENT
                                     };
                                 },
-                                msp::MSP_FAIL => {
+                                msp::MSPRes::MspFail => {
                                     thr.join().unwrap();
                                     break 'b ();
                                 },
-                                _ => nxt = msp::MSG_IDENT
                             }
                             writer.write_all(&encode_msp_vers(nxt, &[]))?;
                         },
