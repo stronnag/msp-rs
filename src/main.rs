@@ -354,8 +354,7 @@ fn main() -> Result<()> {
                                 thr.join().unwrap();
                                 break 'b ();
                             }
-                            msgcnt += 1;
-                            let nxt = handle_msp(&mut st, x, msgcnt, vers, slow, once);
+                            let nxt = handle_msp(&mut st, x, &mut msgcnt, vers, slow, once);
                             if nxt != msp::MSG_FAIL {
                                 writer.write_all(&encode_msp_vers(nxt, &[]))?;
                             }
@@ -372,8 +371,9 @@ fn main() -> Result<()> {
 }
 
 
-fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: bool, once: bool) -> u16 {
+fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: &mut u64, vers: u8, slow: bool, once: bool) -> u16 {
     let mut nxt = x.cmd;
+    *msgcnt += 1;
     match x.cmd {
         msp::MSG_IDENT => {
             *st = Instant::now();
@@ -382,6 +382,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
                     outvalue(IY_MW, &format!("MSP Vers: {}, (protocol v{})", x.data[0], vers)).unwrap();
                 }
             }
+            *msgcnt = 1;
             nxt = msp::MSG_NAME
         }
         msp::MSG_NAME => {
@@ -511,7 +512,7 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
                 outvalue(IY_GPS, &s).unwrap();
                 let dura = st.elapsed();
                 let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
-                let rate = msgcnt as f64 / duras;
+                let rate = *msgcnt as f64 / duras;
                 outvalue(IY_RATE, &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate)).unwrap();
             }
 
@@ -539,7 +540,6 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, sl
             println!("Recv: {:#?}", x);
             nxt = msp::MSG_IDENT;
         },
-
     }
     return nxt;
 }
