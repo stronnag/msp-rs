@@ -1,6 +1,6 @@
 use serialport::SerialPort;
 use std::io;
-//use std::io::Write; // <--- bring flush() into scope
+use iota::iota;
 
 pub const MSG_IDENT: u16 = 100;
 pub const MSG_NAME: u16 = 10;
@@ -16,7 +16,21 @@ pub const MSG_DEBUGMSG: u16 = 253;
 pub const MSG_STATUS_EX:  u16 = 150;
 pub const MSG_INAV_STATUS: u16 = 0x2000;
 pub const MSG_MISC2: u16 = 0x203a;
-pub const MSG_FAIL: u16 = 0xffff;
+
+iota! {
+    pub const MSP_OK: u8 = iota;
+    , MSP_CRC
+        , MSP_DIRN
+        , MSP_FAIL
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct MSPMsg {
+    pub len: u16,
+    pub cmd: u16,
+    pub ok: u8,
+    pub data: Vec<u8>,
+}
 
 fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {
     c ^= a;
@@ -99,14 +113,6 @@ enum States {
     XChecksum,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct MSPMsg {
-    pub len: u16,
-    pub cmd: u16,
-    pub ok: bool,
-    pub data: Vec<u8>,
-}
-
 pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
@@ -123,7 +129,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                         States::Init => {
                             if inp[j] == b'$' {
                                 n = States::M;
-                                msg.ok = false;
+                                msg.ok = MSP_FAIL;
                                 msg.len = 0;
                                 msg.cmd = 0;
                                 dirnok = false;
@@ -198,9 +204,13 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                                     "XCRC error on {} {} {} l={}",
                                     msg.cmd, crc, inp[j], msg.len
                                 );
-                                msg.ok = false
+                                msg.ok = MSP_CRC
                             } else {
-                                msg.ok = dirnok;
+                                msg.ok = if dirnok {
+                                    MSP_OK
+                                } else {
+                                    MSP_DIRN
+                                };
                             }
                             tx.send(msg.clone()).unwrap();
                             n = States::Init;
@@ -232,9 +242,13 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                         States::Crc => {
                             if crc != inp[j] {
                                 println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
-                                msg.ok = false;
+                                msg.ok = MSP_CRC;
                             } else {
-                                msg.ok = dirnok;
+                                msg.ok = if dirnok {
+                                    MSP_OK
+                                } else {
+                                    MSP_DIRN
+                                };
                             }
                             tx.send(msg.clone()).unwrap();
                             n = States::Init;
@@ -245,9 +259,9 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
             Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
             }
             Err(_e) => {
-                msg.cmd = MSG_FAIL;
+                msg.cmd = 0;
                 msg.len = 0;
-                msg.ok = false;
+                msg.ok = MSP_FAIL;
                 tx.send(msg.clone()).unwrap();
                 return 
             }

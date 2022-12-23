@@ -25,7 +25,6 @@ use std::io::stdout;
 use std::io;
 mod msp;
 
-
 iota! {
     const IY_PORT : u16 = 4 + iota;
     , IY_MW
@@ -47,7 +46,6 @@ struct Prompt {
     y: u16,
     s: &'static str,
 }
-
 
 const UIPROMPTS: [Prompt; 14] = [
     Prompt {
@@ -221,13 +219,11 @@ fn main() -> Result<()> {
     let program = args[0].clone();
     let mut vers = 2;
     let mut slow = false;
-    let mut once = false;
     let mut msgcnt = 0;
     let mut timeout: u64 = 1000;
     let mut opts = Options::new();
     opts.optopt("m", "mspvers", "set msp version", "(2)");
     opts.optopt("t", "timeout", "set serial timeout (u/s)", "(1000)");
-    opts.optflag("1", "once", "exit after one iteration");
     opts.optflag("s", "slow", "slow mode");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
@@ -244,10 +240,6 @@ fn main() -> Result<()> {
 
     if matches.opt_present("s") {
         slow = true;
-    }
-
-    if matches.opt_present("1") {
-        once = true;
     }
 
     match matches.opt_get::<u64>("t") {
@@ -348,101 +340,103 @@ fn main() -> Result<()> {
                 }
 
                 recv(rcv) -> res => {
+                    let nxt: u16;
                     match res {
                         Ok(x) => {
-                            if x.cmd  ==   msp::MSG_FAIL  {
-                                thr.join().unwrap();
-                                break 'b ();
+                            if x.cmd == msp::MSG_IDENT {
+                                st = Instant::now();            
+                                msgcnt = 1;
+                            } else {
+                                msgcnt += 1;
                             }
-                            let nxt = handle_msp(&mut st, x, &mut msgcnt, vers, slow, once);
-                            if nxt != msp::MSG_FAIL {
-                                writer.write_all(&encode_msp_vers(nxt, &[]))?;
+                            match x.ok {
+                                msp::MSP_OK => {
+                                    nxt = handle_msp(st, x, msgcnt, vers, slow);
+                                },
+                                msp::MSP_CRC => {
+                                    nxt = msp::MSG_IDENT;
+                                },
+                                msp::MSP_DIRN => {
+                                    nxt = match x.cmd {
+                                        msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
+                                        msp::MSG_IDENT => msp::MSG_NAME,
+                                        msp::MSG_MISC2 => msp::MSG_ANALOG,
+                                        _ => msp::MSG_IDENT
+                                    };
+                                },
+                                msp::MSP_FAIL => {
+                                    thr.join().unwrap();
+                                    break 'b ();
+                                },
+                                _ => nxt = msp::MSG_IDENT
                             }
+                            writer.write_all(&encode_msp_vers(nxt, &[]))?;
                         },
                         Err(e) => eprintln!("Recver {}",e),
                     }
                 }
             }
         }
-//        continue  'a;
     }
     clean_exit(rows);
     Ok(())
 }
 
 
-fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: &mut u64, vers: u8, slow: bool, once: bool) -> u16 {
-    let mut nxt = x.cmd;
-    *msgcnt += 1;
+fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: bool) -> u16 {
+    let nxt:u16;
     match x.cmd {
         msp::MSG_IDENT => {
-            *st = Instant::now();
-            if x.ok {
-                if x.len > 0 {
-                    outvalue(IY_MW, &format!("MSP Vers: {}, (protocol v{})", x.data[0], vers)).unwrap();
-                }
+            if x.len > 0 {
+                outvalue(IY_MW, &format!("MSP Vers: {}, (protocol v{})", x.data[0], vers)).unwrap();
             }
-            *msgcnt = 1;
             nxt = msp::MSG_NAME
         }
         msp::MSG_NAME => {
-            if x.ok {
-                outvalue(IY_NAME, &String::from_utf8_lossy(&x.data)).unwrap();
-            }
+            outvalue(IY_NAME, &String::from_utf8_lossy(&x.data)).unwrap();
             nxt = msp::MSG_API_VERSION
         }
         msp::MSG_API_VERSION => {
-            if x.ok && x.len > 2 {
+            if x.len > 2 {
                 outvalue(IY_APIV, &format!("{}.{} ({})", x.data[1], x.data[2], vers)).unwrap();
             }
             nxt = msp::MSG_FC_VARIANT
         }
         msp::MSG_FC_VARIANT => {
-            if x.ok {
-                outvalue(IY_FC, &String::from_utf8_lossy(&x.data[0..4])).unwrap();
-            }
+            outvalue(IY_FC, &String::from_utf8_lossy(&x.data[0..4])).unwrap();
             nxt = msp::MSG_FC_VERSION
         }
         msp::MSG_FC_VERSION => {
-            if x.ok {
-                outvalue(IY_FCVERS, &format!("{}.{}.{}", x.data[0], x.data[1], x.data[2])).unwrap();
-            }
+            outvalue(IY_FCVERS, &format!("{}.{}.{}", x.data[0], x.data[1], x.data[2])).unwrap();
             nxt = msp::MSG_BUILD_INFO
         }
         msp::MSG_BUILD_INFO => {
-            if x.ok {
-                if x.len > 19 {
-                    let txt = format!("{} {} ({})", 
-                                      &String::from_utf8_lossy(&x.data[0..11]),
-                                      &String::from_utf8_lossy(&x.data[11..19]),
-                                      &String::from_utf8_lossy(&x.data[19..]));
-                    outvalue(IY_BUILD, &txt).unwrap();
-                }
+            if x.len > 19 {
+                let txt = format!("{} {} ({})", 
+                                  &String::from_utf8_lossy(&x.data[0..11]),
+                                  &String::from_utf8_lossy(&x.data[11..19]),
+                                  &String::from_utf8_lossy(&x.data[19..]));
+                outvalue(IY_BUILD, &txt).unwrap();
             }
             nxt = msp::MSG_BOARD_INFO
         }
         msp::MSG_BOARD_INFO => {
-            if x.ok {
-                let board = if x.len > 8 {
-                    String::from_utf8_lossy(&x.data[9..])
-                } else {
-                    String::from_utf8_lossy(&x.data[0..4])
-                };
-
-                outvalue(IY_BOARD, &board).unwrap();
-            }
+            let board = if x.len > 8 {
+                String::from_utf8_lossy(&x.data[9..])
+            } else {
+                String::from_utf8_lossy(&x.data[0..4])
+            };
+            outvalue(IY_BOARD, &board).unwrap();
             nxt = msp::MSG_WP_GETINFO
         }
 
         msp::MSG_WP_GETINFO => {
-            if x.ok {
-                outvalue(IY_WPINFO, &format!(
-                    "{} of {}, valid {}",
-                    x.data[3],
-                    x.data[1],
-                    (x.data[2] == 1)
-                )).unwrap();
-            }
+            outvalue(IY_WPINFO, &format!(
+                "{} of {}, valid {}",
+                x.data[3],
+                x.data[1],
+                (x.data[2] == 1)
+            )).unwrap();
             nxt = if vers == 2 {
                 msp::MSG_MISC2
             } else {
@@ -450,19 +444,15 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: &mut u64, vers: u
             };
         }
         msp::MSG_MISC2 => {
-            if x.ok {
-                let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
-                outvalue(IY_UPTIME, &format!("{}s", uptime)).unwrap();
-            }
+            let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
+            outvalue(IY_UPTIME, &format!("{}s", uptime)).unwrap();
             nxt = msp::MSG_ANALOG
         }
 
         msp::MSG_ANALOG => {
-            if x.ok {
-                let volts: f32 = x.data[0] as f32 / 10.0;
-                let amps: f32 =  u16::from_le_bytes(x.data[5..7].try_into().unwrap()) as f32 / 100.0;
-                outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
-            }
+            let volts: f32 = x.data[0] as f32 / 10.0;
+            let amps: f32 =  u16::from_le_bytes(x.data[5..7].try_into().unwrap()) as f32 / 100.0;
+            outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
             if vers == 2 {
                 nxt = msp::MSG_INAV_STATUS;
             } else {
@@ -471,14 +461,10 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: &mut u64, vers: u
         }
 
         msp::MSG_INAV_STATUS => {
-            if x.ok {
-                let armf = u32::from_le_bytes(x.data[9..13].try_into().unwrap());
-                let s = get_armfails(armf);
-                outvalue(IY_ARM, &s).unwrap();
-                nxt = msp::MSG_RAW_GPS;
-            } else {
-                nxt = msp::MSG_STATUS_EX;
-            }
+            let armf = u32::from_le_bytes(x.data[9..13].try_into().unwrap());
+            let s = get_armfails(armf);
+            outvalue(IY_ARM, &s).unwrap();
+            nxt = msp::MSG_RAW_GPS;
         }
 
         msp::MSG_STATUS_EX => {
@@ -489,59 +475,50 @@ fn handle_msp( st: &mut std::time::Instant, x: MSPMsg, msgcnt: &mut u64, vers: u
         }
 
         msp::MSG_RAW_GPS => {
-            if x.ok {
-                let fix = x.data[0];
-                let nsat = x.data[1];
-                let lat: f32 =
-                    i32::from_le_bytes(x.data[2..6].try_into().unwrap()) as f32 / 1e7;
-                let lon: f32 =
-                    i32::from_le_bytes(x.data[6..10].try_into().unwrap()) as f32 / 1e7;
-                let alt = i16::from_le_bytes(x.data[10..12].try_into().unwrap());
-                let spd: f32 =
-                    u16::from_le_bytes(x.data[12..14].try_into().unwrap()) as f32 / 100.0;
-                let cog: f32 =
-                    u16::from_le_bytes(x.data[14..16].try_into().unwrap()) as f32 / 10.0;
-                let mut s = format!(
-                    "fix {}, sats {}, {:.6}° {:.6}° {}m, {:.0}m/s {:.0}°", fix, nsat, lat, lon, alt, spd, cog);
-                if x.len > 16 {
-                    let hdop: f32 = u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0;
-                    let s1 = format!(" hdop {:.2}", hdop);
-                    s = s + &s1;
-                }
-
-                outvalue(IY_GPS, &s).unwrap();
-                let dura = st.elapsed();
-                let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
-                let rate = *msgcnt as f64 / duras;
-                outvalue(IY_RATE, &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate)).unwrap();
+            let fix = x.data[0];
+            let nsat = x.data[1];
+            let lat: f32 =
+                i32::from_le_bytes(x.data[2..6].try_into().unwrap()) as f32 / 1e7;
+            let lon: f32 =
+                i32::from_le_bytes(x.data[6..10].try_into().unwrap()) as f32 / 1e7;
+            let alt = i16::from_le_bytes(x.data[10..12].try_into().unwrap());
+            let spd: f32 =
+                u16::from_le_bytes(x.data[12..14].try_into().unwrap()) as f32 / 100.0;
+            let cog: f32 =
+                u16::from_le_bytes(x.data[14..16].try_into().unwrap()) as f32 / 10.0;
+            let mut s = format!(
+                "fix {}, sats {}, {:.6}° {:.6}° {}m, {:.0}m/s {:.0}°", fix, nsat, lat, lon, alt, spd, cog);
+            if x.len > 16 {
+                let hdop: f32 = u16::from_le_bytes(x.data[16..18].try_into().unwrap()) as f32 / 100.0;
+                let s1 = format!(" hdop {:.2}", hdop);
+                s = s + &s1;
             }
 
-            if once {
-                nxt = msp::MSG_FAIL;
+            outvalue(IY_GPS, &s).unwrap();
+            let dura = st.elapsed();
+            let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
+            let rate = msgcnt as f64 / duras;
+            outvalue(IY_RATE, &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate)).unwrap();
+            nxt = if vers == 2 {
+                msp::MSG_MISC2
             } else {
-                nxt = if vers == 2 {
-                    msp::MSG_MISC2
-                } else {
-                    msp::MSG_ANALOG
-                };
-                if slow {
-                    thread::sleep(time::Duration::from_millis(1000));
-                }
+                msp::MSG_ANALOG
+            };
+            if slow {
+                thread::sleep(time::Duration::from_millis(1000));
             }
         }
         msp::MSG_DEBUGMSG => {
-            if x.ok {
-                let s = String::from_utf8_lossy(&x.data);
-                println!("Debug: {}", s);
-                nxt = msp::MSG_IDENT
-            }
+            let s = String::from_utf8_lossy(&x.data);
+            println!("Debug: {}", s);
+            nxt = msp::MSG_IDENT
         }
         _ => {
             println!("Recv: {:#?}", x);
             nxt = msp::MSG_IDENT;
         },
     }
-    return nxt;
+    nxt
 }
 
 fn get_armfails(reason: u32) -> String {

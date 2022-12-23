@@ -32,7 +32,6 @@ Usage: msptest [options] DEVICE
 
 Options:
     -m, --mspvers 2     set msp version
-    -1, --once          exit after one iteration
     -s, --slow          slow mode
     -h, --help          print this help menu
 ```
