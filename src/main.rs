@@ -219,12 +219,14 @@ fn main() -> Result<()> {
     let program = args[0].clone();
     let mut vers = 2;
     let mut slow = false;
+    let mut once = false;    
     let mut msgcnt = 0;
     let mut timeout: u64 = 1000;
     let mut opts = Options::new();
     opts.optopt("m", "mspvers", "set msp version", "(2)");
     opts.optopt("t", "timeout", "set serial timeout (u/s)", "(1000)");
     opts.optflag("s", "slow", "slow mode");
+    opts.optflag("1", "once", "Single iteration, then exit");    
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -240,6 +242,10 @@ fn main() -> Result<()> {
 
     if matches.opt_present("s") {
         slow = true;
+    }
+
+    if matches.opt_present("1") {
+        once = true;
     }
 
     match matches.opt_get::<u64>("t") {
@@ -351,7 +357,11 @@ fn main() -> Result<()> {
                             }
                             match x.ok {
                                 msp::MSPRes::MspOk => {
-                                    nxt = handle_msp(st, x, msgcnt, vers, slow);
+                                    if let Some(i) = handle_msp(st, x, msgcnt, vers, slow, once) {
+                                        nxt = i;
+                                    } else {
+                                        break 'a();
+                                    }
                                 },
                                 msp::MSPRes::MspCrc => {
                                     nxt = msp::MSG_IDENT;
@@ -371,7 +381,7 @@ fn main() -> Result<()> {
                             }
                             writer.write_all(&encode_msp_vers(nxt, &[]))?;
                         },
-                        Err(e) => eprintln!("Recver {}",e),
+                        Err(e) => eprintln!("Recv-err {}",e)
                     }
                 }
             }
@@ -382,32 +392,32 @@ fn main() -> Result<()> {
 }
 
 
-fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: bool) -> u16 {
-    let nxt:u16;
+fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: bool, once: bool) -> Option<u16> {
+    let nxt: Option<u16>;
     match x.cmd {
         msp::MSG_IDENT => {
             if x.len > 0 {
                 outvalue(IY_MW, &format!("MSP Vers: {}, (protocol v{})", x.data[0], vers)).unwrap();
             }
-            nxt = msp::MSG_NAME
+            nxt = Some(msp::MSG_NAME)
         }
         msp::MSG_NAME => {
             outvalue(IY_NAME, &String::from_utf8_lossy(&x.data)).unwrap();
-            nxt = msp::MSG_API_VERSION
+            nxt = Some(msp::MSG_API_VERSION)
         }
         msp::MSG_API_VERSION => {
             if x.len > 2 {
                 outvalue(IY_APIV, &format!("{}.{} ({})", x.data[1], x.data[2], vers)).unwrap();
             }
-            nxt = msp::MSG_FC_VARIANT
+            nxt = Some(msp::MSG_FC_VARIANT)
         }
         msp::MSG_FC_VARIANT => {
             outvalue(IY_FC, &String::from_utf8_lossy(&x.data[0..4])).unwrap();
-            nxt = msp::MSG_FC_VERSION
+            nxt = Some(msp::MSG_FC_VERSION)
         }
         msp::MSG_FC_VERSION => {
             outvalue(IY_FCVERS, &format!("{}.{}.{}", x.data[0], x.data[1], x.data[2])).unwrap();
-            nxt = msp::MSG_BUILD_INFO
+            nxt = Some(msp::MSG_BUILD_INFO)
         }
         msp::MSG_BUILD_INFO => {
             if x.len > 19 {
@@ -417,7 +427,7 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
                                   &String::from_utf8_lossy(&x.data[19..]));
                 outvalue(IY_BUILD, &txt).unwrap();
             }
-            nxt = msp::MSG_BOARD_INFO
+            nxt = Some(msp::MSG_BOARD_INFO)
         }
         msp::MSG_BOARD_INFO => {
             let board = if x.len > 8 {
@@ -426,7 +436,7 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
                 String::from_utf8_lossy(&x.data[0..4])
             };
             outvalue(IY_BOARD, &board).unwrap();
-            nxt = msp::MSG_WP_GETINFO
+            nxt = Some(msp::MSG_WP_GETINFO)
         }
 
         msp::MSG_WP_GETINFO => {
@@ -437,40 +447,40 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
                 (x.data[2] == 1)
             )).unwrap();
             nxt = if vers == 2 {
-                msp::MSG_MISC2
+                Some(msp::MSG_MISC2)
             } else {
-                msp::MSG_ANALOG
+                Some(msp::MSG_ANALOG)
             };
         }
         msp::MSG_MISC2 => {
             let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
             outvalue(IY_UPTIME, &format!("{}s", uptime)).unwrap();
-            nxt = msp::MSG_ANALOG
+            nxt = Some(msp::MSG_ANALOG)
         }
 
         msp::MSG_ANALOG => {
             let volts: f32 = x.data[0] as f32 / 10.0;
             let amps: f32 =  u16::from_le_bytes(x.data[5..7].try_into().unwrap()) as f32 / 100.0;
             outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
-            if vers == 2 {
-                nxt = msp::MSG_INAV_STATUS;
+            nxt = if vers == 2 {
+                Some(msp::MSG_INAV_STATUS)
             } else {
-                nxt = msp::MSG_STATUS_EX;
-            }
+                Some(msp::MSG_STATUS_EX)
+            };
         }
 
         msp::MSG_INAV_STATUS => {
             let armf = u32::from_le_bytes(x.data[9..13].try_into().unwrap());
             let s = get_armfails(armf);
             outvalue(IY_ARM, &s).unwrap();
-            nxt = msp::MSG_RAW_GPS;
+            nxt = Some(msp::MSG_RAW_GPS);
         }
 
         msp::MSG_STATUS_EX => {
             let armf = u16::from_le_bytes(x.data[13..15].try_into().unwrap());
             let s = get_armfails(armf as u32);
             outvalue(IY_ARM, &s).unwrap();
-            nxt = msp::MSG_RAW_GPS;
+            nxt = Some(msp::MSG_RAW_GPS);
         }
 
         msp::MSG_RAW_GPS => {
@@ -498,10 +508,12 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
             let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 /1e9;
             let rate = msgcnt as f64 / duras;
             outvalue(IY_RATE, &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate)).unwrap();
-            nxt = if vers == 2 {
-                msp::MSG_MISC2
+            nxt = if once {
+                None
+            } else if vers == 2 {
+                Some(msp::MSG_MISC2)
             } else {
-                msp::MSG_ANALOG
+                Some(msp::MSG_ANALOG)
             };
             if slow {
                 thread::sleep(time::Duration::from_millis(1000));
@@ -510,11 +522,11 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
         msp::MSG_DEBUGMSG => {
             let s = String::from_utf8_lossy(&x.data);
             println!("Debug: {}", s);
-            nxt = msp::MSG_IDENT
+            nxt = Some(msp::MSG_IDENT)
         }
         _ => {
             println!("Recv: {:#?}", x);
-            nxt = msp::MSG_IDENT;
+            nxt = Some(msp::MSG_IDENT)
         },
     }
     nxt
