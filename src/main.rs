@@ -163,7 +163,7 @@ fn get_serial_device(defdev: &str, testcvt: bool) -> String {
                 match p.port_type {
                     serialport::SerialPortType::UsbPort(pt) => {
                         if (pt.vid == 0x0483 && pt.pid == 0x5740) ||
-                            (pt.vid == 1659 && pt.pid == 8963) ||
+                            (pt.vid == 0x0403 && pt.pid == 0x6001) ||
                             (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60)) {
                             return p.port_name.clone();
                         }
@@ -217,14 +217,14 @@ fn ctrl_channel() -> std::result::Result<Receiver<()>, io::Error> {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
-    let mut vers = 2;
+    let mut vers = 1;
     let mut slow = false;
     let mut once = false;    
     let mut msgcnt = 0;
     let mut timeout: u64 = 1000;
     let mut opts = Options::new();
-    opts.optopt("m", "mspvers", "set msp version", "(2)");
-    opts.optopt("t", "timeout", "set serial timeout (u/s)", "(1000)");
+    opts.optopt("m", "mspvers", "set msp version", "[1 or 2] (autodetect)");
+    opts.optopt("t", "timeout", "set serial read timeout (µs)", "[1000µs]");
     opts.optflag("s", "slow", "slow mode");
     opts.optflag("1", "once", "Single iteration, then exit");    
     opts.optflag("h", "help", "print this help menu");
@@ -266,14 +266,6 @@ fn main() -> Result<()> {
         &matches.free[0]
     } else {
         "auto"
-    };
-
-    let encode_msp_vers = |cmd, payload| {
-        let vv = match vers {
-            1 => msp::encode_msp(cmd, payload),
-            _ => msp::encode_msp2(cmd, payload),
-        };
-        vv
     };
 
     let ctrl_c_events = ctrl_channel().unwrap();
@@ -334,19 +326,35 @@ fn main() -> Result<()> {
             msp::reader(&mut *reader, snd);
         });
 
-        writer
-            .write_all(&encode_msp_vers(msp::MSG_IDENT, &[]))
-            .unwrap();
-
         let mut st = Instant::now();
+
+        let vv = msp::encode_msp(msp::MSG_IDENT, &[]);
+        writer.write_all(&vv).unwrap();
+        let mut mtimer = Instant::now();
+        let ticks = tick(Duration::from_millis(100));
+        let mut nto = 0;
+        
         'b:     loop {
             select! {
+                recv(ticks) -> _ => {
+
+                    if mtimer.elapsed() > Duration::from_millis(1000) {
+                        vers  = 1;
+                        let vv = msp::encode_msp(msp::MSG_IDENT, &[]);
+                        writer.write_all(&vv).unwrap();
+                        nto += 1;
+                        outvalue(IY_RATE, &format!("{} timeouts", nto)).unwrap();
+                        mtimer = Instant::now();
+                    }
+                }
+                
                 recv(ctrl_c_events) -> _ => {
                     clean_exit(rows);
                 }
 
                 recv(rcv) -> res => {
                     let nxt: u16;
+                    mtimer = Instant::now();
                     match res {
                         Ok(x) => {
                             if x.cmd == msp::MSG_IDENT {
@@ -357,7 +365,7 @@ fn main() -> Result<()> {
                             }
                             match x.ok {
                                 msp::MSPRes::MspOk => {
-                                    if let Some(i) = handle_msp(st, x, msgcnt, vers, slow, once) {
+                                    if let Some(i) = handle_msp(st, x, msgcnt, &mut vers, slow, once) {
                                         nxt = i;
                                     } else {
                                         break 'a();
@@ -365,13 +373,25 @@ fn main() -> Result<()> {
                                 },
                                 msp::MSPRes::MspCrc => {
                                     nxt = msp::MSG_IDENT;
+                                    vers  = 1;
                                 },
                                 msp::MSPRes::MspDirn => {
                                     nxt = match x.cmd {
-                                        msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
                                         msp::MSG_IDENT => msp::MSG_NAME,
+                                        msp::MSG_NAME => msp::MSG_API_VERSION,
+                                        msp::MSG_API_VERSION => msp::MSG_FC_VARIANT,
+                                        msp::MSG_FC_VARIANT => msp::MSG_FC_VERSION,
+                                        msp::MSG_FC_VERSION => msp::MSG_BUILD_INFO,
+                                        msp::MSG_BUILD_INFO => msp::MSG_BOARD_INFO,
+                                        msp::MSG_BOARD_INFO => {
+                                             outvalue(IY_BOARD, "MultiWii").unwrap();
+                                            msp::MSG_WP_GETINFO
+                                        },
+                                        msp::MSG_WP_GETINFO => msp::MSG_ANALOG,
                                         msp::MSG_MISC2 => msp::MSG_ANALOG,
-                                        _ => msp::MSG_IDENT
+                                        msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
+                                        msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
+                                        _ => { vers  = 1; msp::MSG_IDENT},
                                     };
                                 },
                                 msp::MSPRes::MspFail => {
@@ -379,7 +399,11 @@ fn main() -> Result<()> {
                                     break 'b ();
                                 },
                             }
-                            writer.write_all(&encode_msp_vers(nxt, &[]))?;
+                            let vv = match vers {
+                                1 => msp::encode_msp(nxt, &[]),
+                                _ => msp::encode_msp2(nxt, &[]),
+                            };
+                            writer.write_all(&vv).unwrap();
                         },
                         Err(e) => eprintln!("Recv-err {}",e)
                     }
@@ -392,12 +416,12 @@ fn main() -> Result<()> {
 }
 
 
-fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: bool, once: bool) -> Option<u16> {
+fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: &mut u8, slow: bool, once: bool) -> Option<u16> {
     let nxt: Option<u16>;
     match x.cmd {
         msp::MSG_IDENT => {
             if x.len > 0 {
-                outvalue(IY_MW, &format!("MSP Vers: {}, (protocol v{})", x.data[0], vers)).unwrap();
+                outvalue(IY_MW, &format!("MSP Vers: {}, (MSP v{})", x.data[0], *vers)).unwrap();
             }
             nxt = Some(msp::MSG_NAME)
         }
@@ -407,7 +431,10 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
         }
         msp::MSG_API_VERSION => {
             if x.len > 2 {
-                outvalue(IY_APIV, &format!("{}.{} ({})", x.data[1], x.data[2], vers)).unwrap();
+                if x.data[1] > 1 && x.data[2] > 0 && *vers == 1 {
+                    *vers = 2;
+                }
+                outvalue(IY_APIV, &format!("{}.{} (MSP v{})", x.data[1], x.data[2], *vers)).unwrap();
             }
             nxt = Some(msp::MSG_FC_VARIANT)
         }
@@ -446,7 +473,7 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
                 x.data[1],
                 (x.data[2] == 1)
             )).unwrap();
-            nxt = if vers == 2 {
+            nxt = if *vers == 2 {
                 Some(msp::MSG_MISC2)
             } else {
                 Some(msp::MSG_ANALOG)
@@ -462,7 +489,7 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
             let volts: f32 = x.data[0] as f32 / 10.0;
             let amps: f32 =  u16::from_le_bytes(x.data[5..7].try_into().unwrap()) as f32 / 100.0;
             outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
-            nxt = if vers == 2 {
+            nxt = if *vers == 2 {
                 Some(msp::MSG_INAV_STATUS)
             } else {
                 Some(msp::MSG_STATUS_EX)
@@ -510,7 +537,7 @@ fn handle_msp( st: std::time::Instant, x: MSPMsg, msgcnt: u64, vers: u8, slow: b
             outvalue(IY_RATE, &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate)).unwrap();
             nxt = if once {
                 None
-            } else if vers == 2 {
+            } else if *vers == 2 {
                 Some(msp::MSG_MISC2)
             } else {
                 Some(msp::MSG_ANALOG)

@@ -157,7 +157,7 @@ Rate    : Elapsed 11.90s 738 messages, rate 62.00/s
 ```
 ## Discussion
 
-There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest.
+There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also slightly more capable.
 
 ## Licence
 
