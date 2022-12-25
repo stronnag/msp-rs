@@ -16,13 +16,18 @@ pub const MSG_STATUS_EX:  u16 = 150;
 pub const MSG_INAV_STATUS: u16 = 0x2000;
 pub const MSG_MISC2: u16 = 0x203a;
 
-#[derive(Debug, Default,Clone)]
+#[derive(Debug, Clone)]
 pub enum MSPRes {
     MspOk,
     MspCrc,
     MspDirn,
-    #[default]
     MspFail,
+}
+
+impl Default for MSPRes {
+    fn default() -> Self {
+        MSPRes::MspOk
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -264,7 +269,7 @@ pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>)
                 msg.len = 0;
                 msg.ok = MSPRes::MspFail;
                 tx.send(msg.clone()).unwrap();
-                return 
+                return
             }
         }
     }
