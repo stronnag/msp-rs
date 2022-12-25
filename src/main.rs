@@ -25,6 +25,8 @@ use std::time::Duration;
 use std::time::Instant;
 mod msp;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 iota! {
     const IY_PORT : u16 = 4 + iota;
     , IY_MW
@@ -151,8 +153,8 @@ fn clean_exit(rows: u16) {
     std::process::exit(0);
 }
 
-fn print_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} [options] [device-node]", program);
+fn print_usage(program: &str, opts: &Options) {
+    let brief = format!("Usage: {} [options] [device-node]\nVersion: {}", program, VERSION);
     print!("{}", opts.usage(&brief));
 }
 fn get_serial_device(defdev: &str, testcvt: bool) -> String {
@@ -224,7 +226,9 @@ fn main() -> Result<()> {
     opts.optopt("t", "timeout", "set serial read timeout (µs)", "[1000µs]");
     opts.optflag("s", "slow", "slow mode");
     opts.optflag("1", "once", "Single iteration, then exit");
+    opts.optflag("v", "version", "Show version");
     opts.optflag("h", "help", "print this help menu");
+
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => {
@@ -233,8 +237,17 @@ fn main() -> Result<()> {
     };
 
     if matches.opt_present("h") {
-        print_usage(&program, opts);
+	print_usage(&program, &opts);
         return Ok(());
+    }
+
+    if matches.opt_present("v") {
+	println!("{}", VERSION);
+        return Ok(());
+    }
+
+    if matches.opt_present("s") {
+        slow = true;
     }
 
     if matches.opt_present("s") {
