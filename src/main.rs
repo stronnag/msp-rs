@@ -213,7 +213,6 @@ fn ctrl_channel() -> std::result::Result<Receiver<()>, io::Error> {
     Ok(receiver)
 }
 
-
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
@@ -266,6 +265,14 @@ fn main() -> Result<()> {
         &matches.free[0]
     } else {
         "auto"
+    };
+
+    let encode_msp_vers = |cmd, payload, version| {
+        let vv = match version {
+            1 => msp::encode_msp(cmd, payload),
+            _ => msp::encode_msp2(cmd, payload),
+        };
+        vv
     };
 
     let ctrl_c_events = ctrl_channel().unwrap();
@@ -399,10 +406,7 @@ fn main() -> Result<()> {
                                     break 'b ();
                                 },
                             }
-                            let vv = match vers {
-                                1 => msp::encode_msp(nxt, &[]),
-                                _ => msp::encode_msp2(nxt, &[]),
-                            };
+                            let vv = encode_msp_vers(nxt, &[], vers);
                             writer.write_all(&vv).unwrap();
                         },
                         Err(e) => eprintln!("Recv-err {}",e)
