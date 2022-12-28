@@ -26,7 +26,7 @@ pub enum MSPRes {
 
 impl Default for MSPRes {
     fn default() -> Self {
-        MSPRes::MspOk
+        MSPRes::MspFail
     }
 }
 
