@@ -1,5 +1,6 @@
 extern crate crossbeam_channel;
 extern crate getopts;
+extern crate sys_info;
 
 use crossbeam_channel::{bounded, select, tick, unbounded, Receiver};
 use crossterm::{
@@ -10,7 +11,7 @@ use crossterm::{
     execute,
     style::*,
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
-    ExecutableCommand, Result,
+    ExecutableCommand,  QueueableCommand, Result,
 };
 use getopts::Options;
 use iota::iota;
@@ -24,6 +25,8 @@ use std::time;
 use std::time::Duration;
 use std::time::Instant;
 mod msp;
+
+use sys_info::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -105,6 +108,24 @@ const UIPROMPTS: [Prompt; 14] = [
     },
 ];
 
+
+#[cfg(target_os = "linux")]
+fn get_ostype() -> String {
+    let lx = linux_os_release().unwrap();
+    lx.name().to_string()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_ostype() -> String {
+    os_type().unwrap_or("unknown".to_string())
+}
+
+fn get_rel_info() -> String {
+    let osrel = os_release().unwrap_or("unknown".to_string());
+    let ostype = get_ostype();
+    format!("v{} on {} {} {}", VERSION, &ostype, &osrel, std::env::consts::ARCH)
+}
+
 fn outbase(y: u16, val: &str) -> Result<()> {
     stdout()
         .execute(MoveTo(0, y))?
@@ -135,9 +156,9 @@ fn outvalue(y: u16, val: &str) -> Result<()> {
     Ok(())
 }
 
-fn outtitle(val: &str) -> Result<()> {
+fn outtitle(val: &str, cols: u16) -> Result<()> {
+    setcentre(val, cols, 1)?;
     stdout()
-        .execute(MoveTo(30, 2))?
         .execute(SetAttribute(Attribute::Bold))?
         .execute(SetAttribute(Attribute::Reverse))?
         .execute(Print(val))?
@@ -145,6 +166,22 @@ fn outtitle(val: &str) -> Result<()> {
         .execute(Clear(ClearType::UntilNewLine))?;
     Ok(())
 }
+
+fn outsubtitle(val: &str, cols: u16) -> Result<()> {
+    setcentre(val, cols, 2)?;
+    stdout()
+        .execute(Print(val))?
+        .execute(Clear(ClearType::UntilNewLine))?;
+    Ok(())
+}
+
+fn setcentre(val: &str, cols: u16, row: u16) -> Result<()> {
+    let n = val.len() as u16;
+    let xp = (cols - n) / 2 as u16;
+    stdout().queue(MoveTo(xp, row))?;
+    Ok(())
+}
+
 
 fn clean_exit(rows: u16) {
     disable_raw_mode().unwrap();
@@ -288,7 +325,7 @@ fn main() -> Result<()> {
 
     let ctrl_c_events = ctrl_channel().unwrap();
 
-    let (_cols, rows) = size()?;
+    let (cols, rows) = size()?;
 
     enable_raw_mode()?;
     execute!(stdout(), Hide)?;
@@ -304,11 +341,13 @@ fn main() -> Result<()> {
 
         let mut reader;
 
-        outtitle("MSP Test Viewer")?;
+        outtitle("MSP Test Viewer", cols)?;
         outbase(rows - 1, "Ctrl-C to exit")?;
         for i in 0..UIPROMPTS.len() {
             outprompt(UIPROMPTS[i].y, UIPROMPTS[i].s)?;
         }
+
+        outsubtitle(&get_rel_info(), cols)?;
 
         match serialport::new(&pname, 115_200)
             .timeout(Duration::from_micros(timeout))

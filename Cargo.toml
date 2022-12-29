@@ -1,6 +1,6 @@
 [package]
 name = "msptest"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 authors = ["Jonathan Hudson <jh+github@daria.co.uk>"]
 
@@ -13,6 +13,7 @@ crossbeam = "0.8.2"
 crossbeam-channel = "0.5"
 crossterm = "0.25.0"
 iota = "0.2.2"
+sys-info = "0.9"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
