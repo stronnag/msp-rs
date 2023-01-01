@@ -1,5 +1,3 @@
-use serialport::SerialPort;
-use std::io;
 
 pub const MSG_IDENT: u16 = 100;
 pub const MSG_NAME: u16 = 10;
@@ -15,6 +13,8 @@ pub const MSG_DEBUGMSG: u16 = 253;
 pub const MSG_STATUS_EX:  u16 = 150;
 pub const MSG_INAV_STATUS: u16 = 0x2000;
 pub const MSG_MISC2: u16 = 0x203a;
+
+use crate::serial;
 
 #[derive(Debug, Clone)]
 pub enum MSPRes {
@@ -119,158 +119,152 @@ enum States {
     XChecksum,
 }
 
-pub fn reader(port: &mut dyn SerialPort, tx: crossbeam::channel::Sender<MSPMsg>) {
+pub fn reader(fd: isize, tx: crossbeam::channel::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
-    let mut inp: [u8; 16] = [0; 16];
     let mut crc = 0u8;
     let mut count = 0u16;
     let mut dirnok = false;
 
     loop {
-        match port.read(&mut inp) {
-            Ok(t) => {
-                for j in 0..t {
-                    match n {
-                        States::Init => {
-                            if inp[j] == b'$' {
-                                n = States::M;
-                                msg.ok = MSPRes::MspFail;
-                                msg.len = 0;
-                                msg.cmd = 0;
-                                dirnok = false;
-                            }
+	if let Some(inp) = serial::read(fd, 256) {
+            for j in 0..inp.len() {
+                match n {
+                    States::Init => {
+                        if inp[j] == b'$' {
+                            n = States::M;
+                            msg.ok = MSPRes::MspFail;
+                            msg.len = 0;
+                            msg.cmd = 0;
+                            dirnok = false;
                         }
-                        States::M => {
-                            n = match inp[j] {
-                                b'M' => States::Dirn,
-                                b'X' => States::XHeader2,
-                                _ => States::Init,
-                            }
+                    }
+                    States::M => {
+                        n = match inp[j] {
+                            b'M' => States::Dirn,
+                            b'X' => States::XHeader2,
+                            _ => States::Init,
                         }
-                        States::Dirn => match inp[j] {
-                            b'!' => {
-                                n = States::Len;
-                            },
-                            b'>' => {
-                                n = States::Len;
-                                dirnok = true;
-                            }
-                            _ => n = States::Init,
+                    }
+                    States::Dirn => match inp[j] {
+                        b'!' => {
+                            n = States::Len;
                         },
-                        States::XHeader2 => match inp[j] {
-                            b'!' => n = States::XFlags,
-                            b'>' => {
-                                n = States::XFlags;
-                                dirnok = true;
-                            }
-                            _ => n = States::Init,
-                        },
-                        States::XFlags => {
-                            crc = crc8_dvb_s2(0, inp[j]);
-                            n = States::XId1;
+                        b'>' => {
+                            n = States::Len;
+                            dirnok = true;
                         }
-                        States::XId1 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.cmd = inp[j] as u16;
-                            n = States::XId2;
+                        _ => n = States::Init,
+                    },
+                    States::XHeader2 => match inp[j] {
+                        b'!' => n = States::XFlags,
+                        b'>' => {
+                            n = States::XFlags;
+                            dirnok = true;
                         }
-                        States::XId2 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.cmd |= (inp[j] as u16) << 8;
-                            n = States::XLen1;
+                        _ => n = States::Init,
+                    },
+                    States::XFlags => {
+                        crc = crc8_dvb_s2(0, inp[j]);
+                        n = States::XId1;
+                    }
+                    States::XId1 => {
+                        crc = crc8_dvb_s2(crc, inp[j]);
+                        msg.cmd = inp[j] as u16;
+                        n = States::XId2;
+                    }
+                    States::XId2 => {
+                        crc = crc8_dvb_s2(crc, inp[j]);
+                        msg.cmd |= (inp[j] as u16) << 8;
+                        n = States::XLen1;
+                    }
+                    States::XLen1 => {
+                        crc = crc8_dvb_s2(crc, inp[j]);
+                        msg.len = inp[j] as u16;
+                        n = States::XLen2;
+                    }
+                    States::XLen2 => {
+                        crc = crc8_dvb_s2(crc, inp[j]);
+                        msg.len |= (inp[j] as u16) << 8;
+                        if msg.len > 0 {
+                            n = States::XData;
+                            count = 0;
+                            msg.data = vec![0; msg.len.into()];
+                        } else {
+                            n = States::XChecksum;
                         }
-                        States::XLen1 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.len = inp[j] as u16;
-                            n = States::XLen2;
+                    }
+                    States::XData => {
+                        crc = crc8_dvb_s2(crc, inp[j]);
+                        msg.data[count as usize] = inp[j];
+                        count += 1;
+                        if count == msg.len {
+                            n = States::XChecksum;
                         }
-                        States::XLen2 => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.len |= (inp[j] as u16) << 8;
-                            if msg.len > 0 {
-                                n = States::XData;
-                                count = 0;
-                                msg.data = vec![0; msg.len.into()];
+                    }
+                    States::XChecksum => {
+                        if crc != inp[j] {
+                            println!(
+                                "XCRC error on {} {} {} l={}",
+                                msg.cmd, crc, inp[j], msg.len
+                            );
+                            msg.ok = MSPRes::MspCrc
+                        } else {
+                            msg.ok = if dirnok {
+                                MSPRes::MspOk
                             } else {
-                                n = States::XChecksum;
-                            }
+                                MSPRes::MspDirn
+                            };
                         }
-                        States::XData => {
-                            crc = crc8_dvb_s2(crc, inp[j]);
-                            msg.data[count as usize] = inp[j];
-                            count += 1;
-                            if count == msg.len {
-                                n = States::XChecksum;
-                            }
+                        tx.send(msg.clone()).unwrap();
+                        n = States::Init;
+                    }
+                    States::Len => {
+                        msg.len = inp[j] as u16;
+                        crc = inp[j];
+                        n = States::Cmd;
+                    }
+                    States::Cmd => {
+                        msg.cmd = inp[j] as u16;
+                        crc ^= inp[j];
+                        if msg.len == 0 {
+                            n = States::Crc;
+                        } else {
+                            msg.data = vec![0; msg.len.into()];
+                            n = States::Data;
+                            count = 0;
                         }
-                        States::XChecksum => {
-                            if crc != inp[j] {
-                                println!(
-                                    "XCRC error on {} {} {} l={}",
-                                    msg.cmd, crc, inp[j], msg.len
-                                );
-                                msg.ok = MSPRes::MspCrc
+                    }
+                    States::Data => {
+                        msg.data[count as usize] = inp[j];
+                        crc ^= inp[j];
+                        count += 1;
+                        if count == msg.len {
+                            n = States::Crc;
+                        }
+                    }
+                    States::Crc => {
+                        if crc != inp[j] {
+                            println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
+                            msg.ok = MSPRes::MspCrc;
+                        } else {
+                            msg.ok = if dirnok {
+                                MSPRes::MspOk
                             } else {
-                                msg.ok = if dirnok {
-                                    MSPRes::MspOk
-                                } else {
-                                    MSPRes::MspDirn
-                                };
-                            }
-                            tx.send(msg.clone()).unwrap();
-                            n = States::Init;
+                                MSPRes::MspDirn
+                            };
                         }
-                        States::Len => {
-                            msg.len = inp[j] as u16;
-                            crc = inp[j];
-                            n = States::Cmd;
-                        }
-                        States::Cmd => {
-                            msg.cmd = inp[j] as u16;
-                            crc ^= inp[j];
-                            if msg.len == 0 {
-                                n = States::Crc;
-                            } else {
-                                msg.data = vec![0; msg.len.into()];
-                                n = States::Data;
-                                count = 0;
-                            }
-                        }
-                        States::Data => {
-                            msg.data[count as usize] = inp[j];
-                            crc ^= inp[j];
-                            count += 1;
-                            if count == msg.len {
-                                n = States::Crc;
-                            }
-                        }
-                        States::Crc => {
-                            if crc != inp[j] {
-                                println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
-                                msg.ok = MSPRes::MspCrc;
-                            } else {
-                                msg.ok = if dirnok {
-                                    MSPRes::MspOk
-                                } else {
-                                    MSPRes::MspDirn
-                                };
-                            }
-                            tx.send(msg.clone()).unwrap();
-                            n = States::Init;
-                        }
+                        tx.send(msg.clone()).unwrap();
+                        n = States::Init;
                     }
                 }
             }
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-            }
-            Err(_e) => {
-                msg.cmd = 0;
-                msg.len = 0;
-                msg.ok = MSPRes::MspFail;
-                tx.send(msg.clone()).unwrap();
-                return
-            }
+        } else {
+            msg.cmd = 0;
+            msg.len = 0;
+            msg.ok = MSPRes::MspFail;
+            tx.send(msg.clone()).unwrap();
+            return
         }
     }
 }

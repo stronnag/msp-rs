@@ -2,6 +2,7 @@ extern crate crossbeam_channel;
 extern crate getopts;
 extern crate sys_info;
 
+
 use crossbeam_channel::{bounded, select, tick, unbounded, Receiver};
 use crossterm::{
     cursor::*,
@@ -24,9 +25,10 @@ use std::thread;
 use std::time;
 use std::time::Duration;
 use std::time::Instant;
-mod msp;
-
 use sys_info::*;
+
+mod msp;
+mod serial;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -182,7 +184,6 @@ fn setcentre(val: &str, cols: u16, row: u16) -> Result<()> {
     Ok(())
 }
 
-
 fn clean_exit(rows: u16) {
     disable_raw_mode().unwrap();
     outbase(rows - 1, "").unwrap();
@@ -256,11 +257,7 @@ fn main() -> Result<()> {
     let mut vers = 1;
     let mut slow = false;
     let mut once = false;
-    let mut msgcnt = 0;
-    let mut timeout: u64 = 1000;
     let mut opts = Options::new();
-    opts.optopt("m", "mspvers", "set msp version", "[1 or 2] (autodetect)");
-    opts.optopt("t", "timeout", "set serial read timeout (µs)", "[1000µs]");
     opts.optflag("s", "slow", "slow mode");
     opts.optflag("1", "once", "Single iteration, then exit");
     opts.optflag("v", "version", "Show version");
@@ -295,20 +292,6 @@ fn main() -> Result<()> {
         once = true;
     }
 
-    match matches.opt_get::<u64>("t") {
-        Ok(p) => match p {
-            Some(px) => timeout = px,
-            None => (),
-        },
-        Err(_) => (),
-    }
-
-    let s = matches.opt_str("m");
-    match s {
-        Some(x) => vers = x.parse::<u8>().unwrap(),
-        None => (),
-    }
-
     let defdev = if !matches.free.is_empty() {
         &matches.free[0]
     } else {
@@ -339,8 +322,6 @@ fn main() -> Result<()> {
             pname = defdev.to_string();
         };
 
-        let mut reader;
-
         outtitle("MSP Test Viewer", cols)?;
         outbase(rows - 1, "Ctrl-C to exit")?;
         for i in 0..UIPROMPTS.len() {
@@ -349,60 +330,57 @@ fn main() -> Result<()> {
 
         outsubtitle(&get_rel_info(), cols)?;
 
-        match serialport::new(&pname, 115_200)
-            .timeout(Duration::from_micros(timeout))
-            .open()
-        {
-            Ok(m) => {
-                reader = m;
-            }
-            Err(_) => {
-                let ticks = tick(Duration::from_millis(50));
-                let mut j = 0;
-                'c: loop {
-                    select! {
-                        recv(ticks) -> _ => {
-                            j += 1;
-                            if j == 20 {
-                                break 'c;
-                            }
-                        }
-                        recv(ctrl_c_events) -> _ => {
-                            break 'a;
+	let fd: isize;
+
+	if let Some(n) =  serial::open(&pname, 115_200) {
+	    fd = n;
+	} else {
+            let ticks = tick(Duration::from_millis(50));
+            let mut j = 0;
+            'c: loop {
+                select! {
+                    recv(ticks) -> _ => {
+                        j += 1;
+                        if j == 20 {
+                            break 'c;
                         }
                     }
+                    recv(ctrl_c_events) -> _ => {
+                        break 'a;
+                    }
                 }
-                continue 'a;
             }
+            continue 'a;
         }
+
         let (snd, rcv) = unbounded();
-        reader.clear(serialport::ClearBuffer::All)?;
-        let mut writer = reader.try_clone()?;
+
         outvalue(IY_PORT, &pname)?;
 
         let thr = thread::spawn(move || {
-            msp::reader(&mut *reader, snd);
+            msp::reader(fd, snd);
         });
 
-        let mut st = Instant::now();
-
-        let vv = msp::encode_msp(msp::MSG_IDENT, &[]);
-        writer.write_all(&vv).unwrap();
-        let mut mtimer = Instant::now();
-        let ticks = tick(Duration::from_millis(100));
         let mut nto = 0;
+	let mut msgcnt = 0;
+	let vv = msp::encode_msp(msp::MSG_IDENT, &[]);
+        let _nb = serial::write(fd, &vv);
+//	eprintln!("wrote {} bytes for IDENT {:?}", _nb, vv);
+	let ticks = tick(Duration::from_millis(100));
+        let mut st: Instant = Instant::now();
+        let mut mtimer = Instant::now();
 
         'b: loop {
             select! {
                 recv(ticks) -> _ => {
-
-                    if mtimer.elapsed() > Duration::from_millis(1000) {
+//		    eprintln!("tics {:?}", mtimer.elapsed());
+                    if mtimer.elapsed() > Duration::from_millis(5000) {
+			serial::flush(fd);
                         vers  = 1;
-                        let vv = msp::encode_msp(msp::MSG_IDENT, &[]);
-                        writer.write_all(&vv).unwrap();
                         nto += 1;
-                        outvalue(IY_RATE, &format!("{} timeouts", nto)).unwrap();
+                        outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
                         mtimer = Instant::now();
+                        serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
                     }
                 }
 
@@ -415,12 +393,13 @@ fn main() -> Result<()> {
                     mtimer = Instant::now();
                     match res {
                         Ok(x) => {
-                            if x.cmd == msp::MSG_IDENT {
-                                st = Instant::now();
-                                msgcnt = 1;
-                            } else {
-                                msgcnt += 1;
-                            }
+//			    eprintln!("recv {:?} {:?} {:?}", x.cmd, x.len, x.ok);
+			    if x.cmd == msp::MSG_IDENT {
+				st = Instant::now();
+				msgcnt = 0;
+			    }
+                            msgcnt += 1;
+			    let _last = x.cmd;
                             match x.ok {
                                 msp::MSPRes::MspOk => {
                                     if let Some(i) = handle_msp(st, x, msgcnt, &mut vers, slow, once) {
@@ -451,14 +430,17 @@ fn main() -> Result<()> {
                                         msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
                                         _ => { vers  = 1; msp::MSG_IDENT},
                                     };
+//				    eprintln!("Dirn {} {}", nxt, _last);
                                 },
                                 msp::MSPRes::MspFail => {
                                     thr.join().unwrap();
-                                    break 'b ();
+				    serial::close(fd);
+				    break 'b ();
                                 },
                             }
                             let vv = encode_msp_vers(nxt, &[], vers);
-                            writer.write_all(&vv).unwrap();
+                            let _wnb = serial::write(fd, &vv);
+//			    eprintln!("Sent {} {}", nxt, _wnb);
                         },
                         Err(e) => eprintln!("Recv-err {}",e)
                     }
