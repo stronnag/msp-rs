@@ -27,16 +27,18 @@ GPS: fix 2, sats 5, lat, lon, alt 50.9***** -1.5***** -1, spd 0.33 cog 7.7 hdop 
 ## Usage
 
 ```
-$ target/release/msptest --help
-Usage: msptest [options] DEVICE
+$ msptest --help
+Usage: msptest [options] [device-node]
+Version: 0.10.0
 
 Options:
-    -m, --mspvers 2     set msp version
     -s, --slow          slow mode
+    -1, --once          Single iteration, then exit
+    -v, --version       Show version
     -h, --help          print this help menu
 ```
 
-On POSIX platforms at least, if no device is given, the application will make a reasonable attempt to evince any valid serial device, with `msptest` installed on `$PATH`:
+On Linux / Macos / Windows, if no device is given, the application will make a reasonable attempt to evince any valid serial device; e.g. with `msptest` installed on `$PATH`:
 
 ```
 $ msptest
@@ -57,7 +59,7 @@ Elapsed 37.25s 2306 messages, rate 61.90/s
 
 ^C to exit.
 
-However, for non-Linux, it may be necessary to define the device node, e.g. FreeBSD:
+However, for FreeBSD, it is currently be necessary to define the device node, e.g. FreeBSD:
 
 ```
 $ msptest /dev/cuaU0
@@ -77,15 +79,16 @@ Elapsed 48.81s 3020 messages, rate 61.88/s
 
 Thusly:
 
+
 ```
+# This would be auto-discovered
 # macos
 msptest /dev/cu.usbmodem0x80000001
 
 # Windows
+# This would be auto-discovered
 msptest.exe COM17
 ```
-
-Note that on Windows, the rust `serialport` performance is less than impressive.
 
 ## Makefile
 
@@ -101,10 +104,8 @@ As a short cut for `cargo` commands / options, there's a Makefile
 
 ### MultiWii
 
-Requires `-m 1` to force MSP v1.
-
 ```
-$ msptest -m 1
+$ msptest
 Serial port: /dev/ttyUSB0
 MSP Vers: 241, (protocol v1)
 Voltage: 4.20
@@ -156,6 +157,17 @@ Arming  : NavUnsafe H/WFail
 Rate    : Elapsed 11.90s 738 messages, rate 62.00/s
 ```
 ## Discussion
+
+### Unsafe (C) serial implementation
+
+This example uses an (unsafe) C language implementation for serial I/O, rather than the serialport crate:
+
+* serialport does not support RISC-V
+* serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos). With the C implementation, the Windows performance is about 80% of the POSIX platforms.
+
+Prior to version 0.10.0, the serialport crate was also used for I/O.
+
+### Other
 
 There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also slightly more capable.
 
