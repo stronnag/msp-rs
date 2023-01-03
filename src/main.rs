@@ -184,6 +184,16 @@ fn setcentre(val: &str, cols: u16, row: u16) -> Result<()> {
     Ok(())
 }
 
+fn redraw (cols: u16, rows: u16) -> Result<()> {
+    outtitle("MSP Test Viewer", cols)?;
+    outbase(rows - 1, "Ctrl-C to exit")?;
+    for i in 0..UIPROMPTS.len() {
+        outprompt(UIPROMPTS[i].y, UIPROMPTS[i].s)?;
+    }
+    outsubtitle(&get_rel_info(), cols)?;
+    Ok(())
+}
+
 fn clean_exit(rows: u16) {
     disable_raw_mode().unwrap();
     outbase(rows - 1, "").unwrap();
@@ -218,7 +228,7 @@ fn get_serial_device(defdev: &str, testcvt: bool) -> String {
     pname
 }
 
-fn ctrl_channel() -> std::result::Result<Receiver<()>, io::Error> {
+fn ctrl_channel() -> std::result::Result<Receiver<u8>, io::Error> {
     let (sender, receiver) = bounded(5);
     thread::spawn(move || loop {
         if poll(Duration::ZERO).expect("") {
@@ -229,15 +239,22 @@ fn ctrl_channel() -> std::result::Result<Receiver<()>, io::Error> {
                         modifiers: event::KeyModifiers::NONE,
                         ..
                     } => {
-                        let _ = sender.send(());
+                        let _ = sender.send(b'Q');
                         break;
+                    }
+                    KeyEvent {
+                        code: KeyCode::Char('r'),
+                        modifiers: event::KeyModifiers::NONE,
+                        ..
+                    } => {
+                        let _ = sender.send(b'R');
                     }
                     KeyEvent {
                         code: KeyCode::Char('c'),
                         modifiers: event::KeyModifiers::CONTROL,
                         ..
                     } => {
-                        let _ = sender.send(());
+                        let _ = sender.send(b'Q');
                         break;
                     }
                     _ => {
@@ -308,7 +325,7 @@ fn main() -> Result<()> {
 
     let ctrl_c_events = ctrl_channel().unwrap();
 
-    let (cols, rows) = size()?;
+    let (mut cols, mut rows) = size()?;
 
     enable_raw_mode()?;
     execute!(stdout(), Hide)?;
@@ -322,13 +339,7 @@ fn main() -> Result<()> {
             pname = defdev.to_string();
         };
 
-        outtitle("MSP Test Viewer", cols)?;
-        outbase(rows - 1, "Ctrl-C to exit")?;
-        for i in 0..UIPROMPTS.len() {
-            outprompt(UIPROMPTS[i].y, UIPROMPTS[i].s)?;
-        }
-
-        outsubtitle(&get_rel_info(), cols)?;
+	redraw(cols, rows)?;
 
 	let fd: isize;
 
@@ -345,8 +356,13 @@ fn main() -> Result<()> {
                             break 'c;
                         }
                     }
-                    recv(ctrl_c_events) -> _ => {
-                        break 'a;
+                    recv(ctrl_c_events) -> res => {
+			match res {
+			    Ok(x) => {
+				if x == b'Q' { break 'a;}
+			    },
+			    Err(_) => (),
+			}
                     }
                 }
             }
@@ -363,17 +379,15 @@ fn main() -> Result<()> {
 
         let mut nto = 0;
 	let mut msgcnt = 0;
-	let vv = msp::encode_msp(msp::MSG_IDENT, &[]);
-        let _nb = serial::write(fd, &vv);
-//	eprintln!("wrote {} bytes for IDENT {:?}", _nb, vv);
+        serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
 	let ticks = tick(Duration::from_millis(100));
-        let mut st: Instant = Instant::now();
+        let mut st = Instant::now();
         let mut mtimer = Instant::now();
+	let mut refresh = false;
 
         'b: loop {
             select! {
                 recv(ticks) -> _ => {
-//		    eprintln!("tics {:?}", mtimer.elapsed());
                     if mtimer.elapsed() > Duration::from_millis(5000) {
 			serial::flush(fd);
                         vers  = 1;
@@ -381,22 +395,27 @@ fn main() -> Result<()> {
                         outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
                         mtimer = Instant::now();
                         serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
+			msgcnt = 0;
                     }
                 }
 
-                recv(ctrl_c_events) -> _ => {
-                    clean_exit(rows);
+                recv(ctrl_c_events) -> res => {
+		    match res {
+			Ok(x) => {
+			    if x == b'Q' { clean_exit(rows);}
+			    refresh = true;
+			},
+			Err(_) => (),
+		    }
                 }
 
                 recv(rcv) -> res => {
-                    let nxt: u16;
+                    let mut nxt: u16;
                     mtimer = Instant::now();
                     match res {
                         Ok(x) => {
-//			    eprintln!("recv {:?} {:?} {:?}", x.cmd, x.len, x.ok);
-			    if x.cmd == msp::MSG_IDENT {
+			    if msgcnt == 0 {
 				st = Instant::now();
-				msgcnt = 0;
 			    }
                             msgcnt += 1;
 			    let _last = x.cmd;
@@ -410,7 +429,6 @@ fn main() -> Result<()> {
                                 },
                                 msp::MSPRes::MspCrc => {
                                     nxt = msp::MSG_IDENT;
-                                    vers  = 1;
                                 },
                                 msp::MSPRes::MspDirn => {
                                     nxt = match x.cmd {
@@ -421,16 +439,15 @@ fn main() -> Result<()> {
                                         msp::MSG_FC_VERSION => msp::MSG_BUILD_INFO,
                                         msp::MSG_BUILD_INFO => msp::MSG_BOARD_INFO,
                                         msp::MSG_BOARD_INFO => {
-                                             outvalue(IY_BOARD, "MultiWii").unwrap();
+                                             outvalue(IY_BOARD, "MultiWii")?;
                                             msp::MSG_WP_GETINFO
                                         },
                                         msp::MSG_WP_GETINFO => msp::MSG_ANALOG,
                                         msp::MSG_MISC2 => msp::MSG_ANALOG,
                                         msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
                                         msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
-                                        _ => { vers  = 1; msp::MSG_IDENT},
+                                        _ => msp::MSG_IDENT,
                                     };
-//				    eprintln!("Dirn {} {}", nxt, _last);
                                 },
                                 msp::MSPRes::MspFail => {
                                     thr.join().unwrap();
@@ -438,9 +455,19 @@ fn main() -> Result<()> {
 				    break 'b ();
                                 },
                             }
-                            let vv = encode_msp_vers(nxt, &[], vers);
-                            let _wnb = serial::write(fd, &vv);
-//			    eprintln!("Sent {} {}", nxt, _wnb);
+			    if nxt == msp::MSG_IDENT  {
+				vers = 1;
+				msgcnt = 0;
+			    }
+			    if refresh {
+				refresh  = false;
+				nxt = msp::MSG_IDENT;
+				(cols, rows) = size()?;
+				execute!(stdout(), Clear(ClearType::All))?;
+				redraw(cols, rows)?;
+				outvalue(IY_PORT, &pname)?;
+			    }
+                            serial::write(fd, &encode_msp_vers(nxt, &[], vers));
                         },
                         Err(e) => eprintln!("Recv-err {}",e)
                     }
@@ -453,7 +480,7 @@ fn main() -> Result<()> {
 }
 
 fn handle_msp(
-    st: std::time::Instant,
+    st: Instant,
     x: MSPMsg,
     msgcnt: u64,
     vers: &mut u8,
