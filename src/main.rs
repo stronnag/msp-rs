@@ -2,7 +2,6 @@ extern crate crossbeam_channel;
 extern crate getopts;
 extern crate sys_info;
 
-
 use crossbeam_channel::{bounded, select, tick, unbounded, Receiver};
 use crossterm::{
     cursor::*,
@@ -205,28 +204,6 @@ fn print_usage(program: &str, opts: &Options) {
     let brief = format!("Usage: {} [options] [device-node]\nVersion: {}", program, VERSION);
     print!("{}", opts.usage(&brief));
 }
-fn get_serial_device(defdev: &str, testcvt: bool) -> String {
-    let pname = match serialport::available_ports() {
-        Ok(ports) => {
-            for p in ports {
-                match p.port_type {
-                    serialport::SerialPortType::UsbPort(pt) => {
-                        if (pt.vid == 0x0483 && pt.pid == 0x5740)
-                            || (pt.vid == 0x0403 && pt.pid == 0x6001)
-                            || (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60))
-                        {
-                            return p.port_name.clone();
-                        }
-                    }
-                    _ => (),
-                }
-            }
-            defdev.to_string()
-        }
-        Err(_e) => defdev.to_string(),
-    };
-    pname
-}
 
 fn ctrl_channel() -> std::result::Result<Receiver<u8>, io::Error> {
     let (sender, receiver) = bounded(5);
@@ -334,7 +311,7 @@ fn main() -> Result<()> {
     'a: loop {
         let pname: String;
         if defdev == "auto" {
-            pname = get_serial_device(defdev, true);
+            pname = serial::get_serial_device(defdev, true);
         } else {
             pname = defdev.to_string();
         };

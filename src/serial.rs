@@ -11,6 +11,36 @@ extern {
     fn flush_serial(fd: c_int);
 }
 
+pub fn get_serial_device(defdev: &str, testcvt: bool) -> String {
+    let pname = match serialport::available_ports() {
+        Ok(ports) => {
+            for p in ports {
+                match &p.port_type {
+                    serialport::SerialPortType::UsbPort(pt) => {
+                        if (pt.vid == 0x0483 && pt.pid == 0x5740)
+                            || (pt.vid == 0x0403 && pt.pid == 0x6001)
+                            || (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60))
+                        {
+                            return p.port_name.clone();
+                        }
+                    }
+                    _ => {
+			if std::env::consts::OS == "freebsd" {
+			    if std::fs::metadata("/dev/cuaU0").is_ok() {
+				return "/dev/cuaU0".to_string()
+			    }
+			};
+			()
+		    },
+                }
+            }
+            defdev.to_string()
+        }
+        Err(_e) => defdev.to_string(),
+    };
+    pname
+}
+
 pub fn open(name: &str, baud: isize) -> Option<isize> {
     let dname = CString::new(name).unwrap();
     let dptr = dname.as_ptr() as *const c_char;
