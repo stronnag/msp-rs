@@ -26,16 +26,16 @@ pub fn get_serial_device(defdev: &str, testcvt: bool) -> String {
                     }
                     _ => {
 			if std::env::consts::OS == "freebsd" {
-			    if std::fs::metadata("/dev/cuaU0").is_ok() {
-				return "/dev/cuaU0".to_string()
+                            if &p.port_name[0..9] == "/dev/cuaU" {
+				return p.port_name.clone();
 			    }
-			};
+			}
 			()
 		    },
-                }
-            }
+		}
+	    }
             defdev.to_string()
-        }
+        },
         Err(_e) => defdev.to_string(),
     };
     pname

@@ -38,7 +38,7 @@ Options:
     -h, --help          print this help menu
 ```
 
-On Linux / Macos / Windows, if no device is given, the application will make a reasonable attempt to evince any valid serial device; e.g. with `msptest` installed on `$PATH`:
+On Linux / Macos / Windows / FreeBSD, if no device is given, the application will make a reasonable attempt to evince any valid serial device; e.g. with `msptest` installed on `$PATH`:
 
 ```
 $ msptest
@@ -59,26 +59,9 @@ Elapsed 37.25s 2306 messages, rate 61.90/s
 
 ^C to exit.
 
-However, for FreeBSD, it is currently be necessary to define the device node, e.g. FreeBSD:
-
-```
-$ msptest /dev/cuaU0
-Serial port: /dev/cuaU0
-Name: BenchyMcTesty
-API Version: 2.4
-Firmware: INAV
-FW Version: 6.0.0
-Git revsion: 4bbd2fa5
-Board: WINGFC
-Extant waypoints in FC: 0 of 120, valid false
-Uptime: 69s
-Voltage: 0.00
-GPS: fix 0, sats 0, lat, lon, alt 0.000000 0.000000 0, spd 0.00 cog 0 hdop 99.99
-Elapsed 48.81s 3020 messages, rate 61.88/s
-```
+Note for FreeBSD, only /dev/cuaU* is recognised:
 
 Thusly:
-
 
 ```
 # This would be auto-discovered

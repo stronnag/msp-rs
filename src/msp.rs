@@ -204,10 +204,6 @@ pub fn reader(fd: isize, tx: crossbeam::channel::Sender<MSPMsg>) {
                     }
                     States::XChecksum => {
                         if crc != inp[j] {
-                            println!(
-                                "XCRC error on {} {} {} l={}",
-                                msg.cmd, crc, inp[j], msg.len
-                            );
                             msg.ok = MSPRes::MspCrc
                         } else {
                             msg.ok = if dirnok {
@@ -245,7 +241,6 @@ pub fn reader(fd: isize, tx: crossbeam::channel::Sender<MSPMsg>) {
                     }
                     States::Crc => {
                         if crc != inp[j] {
-                            println!("MCRC error on {} {} {}", msg.cmd, crc, inp[j]);
                             msg.ok = MSPRes::MspCrc;
                         } else {
                             msg.ok = if dirnok {
