@@ -138,24 +138,44 @@ Elapsed 14.31s 1427 messages, rate 99.69/s
 The example has now migrated to a TUI application:
 
 ```
+                                  MSP Test Viewer
+                       v0.12.0 on freebsd 13.1-RELEASE x86_64
 
-                              MSP Test Viewer
-
-Port    : /dev/ttyACM0
+Port    : /dev/cuaU0
 MW Vers : ---
 Name    : BenchyMcTesty
-API Vers: API Version: 2.4
+API Vers: 2.4 (MSP v2)
 FC      : INAV
 FC Vers : 6.0.0
-Build   : d59b1036
+Build   : Dec 29 2022 12:38:03 (243b867d)
 Board   : WINGFC
-WP Info : Extant waypoints in FC: 0 of 120, valid false
-Uptime  : Uptime: 204s
-Power   : 0.00 volts
+WP Info : 0 of 120, valid false
+Uptime  : 90563s
+Power   : 0.0 volts, 0.11 amps
 GPS     : fix 0, sats 0, 0.000000° 0.000000° 0m, 0m/s 0° hdop 99.99
-Arming  : NavUnsafe H/WFail
-Rate    : Elapsed 11.90s 738 messages, rate 62.00/s
+Arming  : NavUnsafe H/WFail RCLink (0x48800)
+Rate    : 5587388 messages in 90358.35s (61.8/s) (unknown: 1, crc 0)
 ```
+
+From 0.12.0, the rate line includes the count of unknown massages and CRC errors. The CRC count should be zero; the unknown count will vary according to version:
+
+```
+Board   : MultiWii
+Rate    : 1934 messages in 30.9s (62.6/s) (unknown: 649, crc 0)
+
+Board   : CC3D
+FC Vers : 1.9.254
+Rate    : 4072 messages in 40.8s (99.7/s) (unknown: 1016, crc 0)
+
+Board   : MATEKF405
+FC Vers : 6.0.0
+Rate    : 2384 messages in 38.5s (61.9/s) (unknown: 1, crc 0)
+```
+
+* MultiWii: c. 33% unknown
+* Ancient INAV: c. 25% unknown
+* Modern INAV: 1 unknown
+
 ## Discussion
 
 ### Unsafe (C) serial implementation
@@ -169,7 +189,7 @@ Prior to version 0.10.0, the serialport crate was also used for I/O.
 
 ### Other
 
-There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also slightly more capable.
+There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also more capable.
 
 ## Licence
 

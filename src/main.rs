@@ -355,12 +355,14 @@ fn main() -> Result<()> {
         });
 
         let mut nto = 0;
-	let mut msgcnt = 0;
         serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
 	let ticks = tick(Duration::from_millis(100));
         let mut st = Instant::now();
         let mut mtimer = Instant::now();
 	let mut refresh = false;
+	let mut msgcnt = 0;
+	let mut e_bad = 0;
+	let mut e_crc = 0;
 
         'b: loop {
             select! {
@@ -372,9 +374,17 @@ fn main() -> Result<()> {
                         outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
                         mtimer = Instant::now();
                         serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
-			msgcnt = 0;
                     }
-                }
+
+		    if msgcnt > 0 {
+			let dura = st.elapsed();
+			let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 / 1e9;
+			let rate = msgcnt as f64 / duras;
+			outvalue(
+			    IY_RATE,
+			    &format!("{} messages in {:.1}s ({:.1}/s) (unknown: {}, crc {})", msgcnt, duras, rate, e_bad, e_crc))?;
+		    }
+		}
 
                 recv(ctrl_c_events) -> res => {
 		    match res {
@@ -393,21 +403,25 @@ fn main() -> Result<()> {
                         Ok(x) => {
 			    if msgcnt == 0 {
 				st = Instant::now();
+				e_crc = 0;
+				e_bad = 0;
 			    }
                             msgcnt += 1;
 			    let _last = x.cmd;
                             match x.ok {
                                 msp::MSPRes::MspOk => {
-                                    if let Some(i) = handle_msp(st, x, msgcnt, &mut vers, slow, once) {
+                                    if let Some(i) = handle_msp(x, &mut vers, slow, once) {
                                         nxt = i;
                                     } else {
                                         break 'a();
                                     }
                                 },
                                 msp::MSPRes::MspCrc => {
+				    e_crc += 1;
                                     nxt = msp::MSG_IDENT;
                                 },
                                 msp::MSPRes::MspDirn => {
+				    e_bad += 1;
                                     nxt = match x.cmd {
                                         msp::MSG_IDENT => msp::MSG_NAME,
                                         msp::MSG_NAME => msp::MSG_API_VERSION,
@@ -457,9 +471,7 @@ fn main() -> Result<()> {
 }
 
 fn handle_msp(
-    st: Instant,
     x: MSPMsg,
-    msgcnt: u64,
     vers: &mut u8,
     slow: bool,
     once: bool,
@@ -586,14 +598,6 @@ fn handle_msp(
             }
 
             outvalue(IY_GPS, &s).unwrap();
-            let dura = st.elapsed();
-            let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 / 1e9;
-            let rate = msgcnt as f64 / duras;
-            outvalue(
-                IY_RATE,
-                &format!("{} messages in {:.2}s ({:.1}/s)", msgcnt, duras, rate),
-            )
-            .unwrap();
             nxt = if once {
                 None
             } else if *vers == 2 {
