@@ -19,6 +19,7 @@ use msp::MSPMsg;
 use std::convert::TryInto;
 use std::env;
 use std::io;
+use std::io::*;
 use std::io::stdout;
 use std::thread;
 use std::time;
@@ -27,7 +28,12 @@ use std::time::Instant;
 use sys_info::*;
 
 mod msp;
+
+#[cfg_attr(unix, path = "serial_posix.rs")]
+#[cfg_attr(windows, path = "serial_windows.rs")]
 mod serial;
+
+use crate::serial::SerialDevice;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -245,6 +251,39 @@ fn ctrl_channel() -> std::result::Result<Receiver<u8>, io::Error> {
     Ok(receiver)
 }
 
+pub fn get_serial_device(defdev: &str, testcvt: bool) -> String {
+    let pname = match serialport::available_ports() {
+        Ok(ports) => {
+            for p in ports {
+                match &p.port_type {
+                    serialport::SerialPortType::UsbPort(pt) => {
+                        if (pt.vid == 0x0483 && pt.pid == 0x5740)
+                            || (pt.vid == 0x0403 && pt.pid == 0x6001)
+                            || (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60
+))
+                        {
+                            return p.port_name.clone();
+                        }
+                    }
+                    _ => {
+                        if std::env::consts::OS == "freebsd" {
+                            if &p.port_name[0..9] == "/dev/cuaU" {
+                                return p.port_name.clone();
+                            }
+                        }
+                        ()
+                    },
+                }
+            }
+            defdev.to_string()
+        },
+        Err(_e) => {
+	    defdev.to_string()
+	},
+    };
+    pname
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
@@ -308,54 +347,57 @@ fn main() -> Result<()> {
     execute!(stdout(), Hide)?;
     execute!(stdout(), Clear(ClearType::All))?;
 
+    let mut sd = serial::SerialDevice::new();
     'a: loop {
         let pname: String;
         if defdev == "auto" {
-            pname = serial::get_serial_device(defdev, true);
+            pname = get_serial_device(defdev, true);
         } else {
             pname = defdev.to_string();
         };
 
 	redraw(cols, rows)?;
 
-	let fd: isize;
-
-	if let Some(n) =  serial::open(&pname, 115_200) {
-	    fd = n;
-	} else {
-            let ticks = tick(Duration::from_millis(50));
-            let mut j = 0;
-            'c: loop {
-                select! {
-                    recv(ticks) -> _ => {
-                        j += 1;
-                        if j == 20 {
-                            break 'c;
-                        }
-                    }
-                    recv(ctrl_c_events) -> res => {
-			match res {
-			    Ok(x) => {
-				if x == b'Q' { break 'a;}
-			    },
-			    Err(_) => (),
+	match sd.open(&pname, 115_200) {
+	    Ok(_) => {
+		sd.clear()
+	    },
+	    Err(_e)=> {
+		let ticks = tick(Duration::from_millis(50));
+		let mut j = 0;
+		'c: loop {
+                    select! {
+			recv(ticks) -> _ => {
+                            j += 1;
+                            if j == 20 {
+				break 'c;
+                            }
+			}
+			recv(ctrl_c_events) -> res => {
+			    match res {
+				Ok(x) => {
+				    if x == b'Q' { break 'a;}
+				},
+				Err(_) => (),
+			    }
 			}
                     }
-                }
-            }
-            continue 'a;
-        }
+		}
+		continue 'a;
+            },
+	}
 
         let (snd, rcv) = unbounded();
 
         outvalue(IY_PORT, &pname)?;
 
+	let rd = sd.clone();
         let thr = thread::spawn(move || {
-            msp::reader(fd, snd);
+            msp::reader(rd, snd);
         });
 
         let mut nto = 0;
-        serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
+        sd.write(&msp::encode_msp(msp::MSG_IDENT, &[]))?;
 	let ticks = tick(Duration::from_millis(100));
         let mut st = Instant::now();
         let mut mtimer = Instant::now();
@@ -368,12 +410,11 @@ fn main() -> Result<()> {
             select! {
                 recv(ticks) -> _ => {
                     if mtimer.elapsed() > Duration::from_millis(5000) {
-			serial::flush(fd);
                         vers  = 1;
                         nto += 1;
                         outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
                         mtimer = Instant::now();
-                        serial::write(fd, &msp::encode_msp(msp::MSG_IDENT, &[]));
+                        sd.write(&msp::encode_msp(msp::MSG_IDENT, &[]))?;
                     }
 
 		    if msgcnt > 0 {
@@ -442,7 +483,6 @@ fn main() -> Result<()> {
                                 },
                                 msp::MSPRes::MspFail => {
                                     thr.join().unwrap();
-				    serial::close(fd);
 				    break 'b ();
                                 },
                             }
@@ -458,7 +498,10 @@ fn main() -> Result<()> {
 				redraw(cols, rows)?;
 				outvalue(IY_PORT, &pname)?;
 			    }
-                            serial::write(fd, &encode_msp_vers(nxt, &[], vers));
+			    match sd.write(&encode_msp_vers(nxt, &[], vers)) {
+				Ok(_) => (),
+				Err(_) => () // don't care, read will catch it
+			    }
                         },
                         Err(e) => eprintln!("Recv-err {}",e)
                     }

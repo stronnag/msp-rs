@@ -158,7 +158,7 @@ ssize_t write_serial(int fd, uint8_t*buffer, size_t buflen) {
 
 #else
 #include <windows.h>
-
+__attribute__ ((unused))
 static void show_error(DWORD errval) {
   char errstr[1024];
   FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, errval,
@@ -166,15 +166,13 @@ static void show_error(DWORD errval) {
   fprintf(stderr, "Err: %s\n", errstr);
 }
 
-void flush_serial(__attribute__ ((unused)) int fd) {
-  HANDLE hfd = (HANDLE)_get_osfhandle(fd);
+void flush_serial(__attribute__ ((unused)) HANDLE hfd) {
   PurgeComm(hfd, PURGE_RXABORT|PURGE_TXABORT|PURGE_RXCLEAR|PURGE_TXCLEAR);
 }
 
-void set_fd_speed(int fd, int baudrate) {
+void set_fd_speed(HANDLE hfd, int baudrate) {
     DCB dcb = {0};
     BOOL res = FALSE;
-    HANDLE hfd = (HANDLE)_get_osfhandle(fd);
 
     dcb.DCBlength = sizeof(DCB);
 
@@ -210,8 +208,7 @@ void set_fd_speed(int fd, int baudrate) {
     }
 }
 
-void set_timeout(int fd, __attribute__ ((unused)) int p0, __attribute__ ((unused)) int p1) {
-  HANDLE hfd = (HANDLE)_get_osfhandle(fd);
+void set_timeout(HANDLE hfd, __attribute__ ((unused)) int p0, __attribute__ ((unused)) int p1) {
   COMMTIMEOUTS ctout;
   GetCommTimeouts(hfd, &ctout);
   ctout.ReadIntervalTimeout = MAXDWORD;
@@ -220,8 +217,7 @@ void set_timeout(int fd, __attribute__ ((unused)) int p0, __attribute__ ((unused
   SetCommTimeouts(hfd, &ctout);
 }
 
-int open_serial(const char *device, int baudrate) {
-  int fd = -1;
+HANDLE open_serial(const char *device, int baudrate) {
   HANDLE hfd = CreateFile(device,
                    GENERIC_READ|GENERIC_WRITE,
                    0,
@@ -229,20 +225,19 @@ int open_serial(const char *device, int baudrate) {
                    OPEN_EXISTING,
                    FILE_FLAG_OVERLAPPED,
                    NULL);
+
   if(hfd != INVALID_HANDLE_VALUE) {
-    fd = _open_osfhandle((intptr_t)hfd, O_RDWR);
-    set_timeout(fd, 0, 0);
-    set_fd_speed(fd, baudrate);
+    set_timeout(hfd, 0, 0);
+    set_fd_speed(hfd, baudrate);
   }
-  return fd;
+  return hfd;
 }
 
-void close_serial(int fd) {
-  close(fd);
+void close_serial(HANDLE hfd) {
+  CloseHandle(hfd);
 }
 
-ssize_t read_serial(int fd, uint8_t*buffer, size_t buflen) {
-  HANDLE hfd = (HANDLE)_get_osfhandle(fd);
+ssize_t read_serial(HANDLE hfd, uint8_t*buffer, size_t buflen) {
   DWORD nb= 0;
   OVERLAPPED ovl={0};
   ovl.hEvent =   CreateEvent(NULL, true, false, NULL);
@@ -251,15 +246,15 @@ ssize_t read_serial(int fd, uint8_t*buffer, size_t buflen) {
     if (eval == ERROR_IO_PENDING) {
       GetOverlappedResult(hfd, &ovl, &nb, true);
     } else {
-      show_error(eval);
+      //      show_error(eval);
+      nb = 0;
     }
   }
   CloseHandle(ovl.hEvent);
   return (ssize_t)nb;
 }
 
-ssize_t write_serial(int fd, uint8_t*buffer, size_t buflen) {
-  HANDLE hfd = (HANDLE)_get_osfhandle(fd);
+ssize_t write_serial(HANDLE hfd, uint8_t*buffer, size_t buflen) {
   DWORD nb= 0;
   OVERLAPPED ovl={0};
   ovl.hEvent = CreateEvent(NULL, true, false, NULL);
@@ -268,7 +263,8 @@ ssize_t write_serial(int fd, uint8_t*buffer, size_t buflen) {
     if (eval == ERROR_IO_PENDING) {
       GetOverlappedResult(hfd, &ovl, &nb, true);
     } else {
-      show_error(eval);
+      //      show_error(eval);
+      nb = 0;
     }
   }
   CloseHandle(ovl.hEvent);
