@@ -498,10 +498,7 @@ fn main() -> Result<()> {
 				redraw(cols, rows)?;
 				outvalue(IY_PORT, &pname)?;
 			    }
-			    match sd.write(&encode_msp_vers(nxt, &[], vers)) {
-				Ok(_) => (),
-				Err(_) => () // don't care, read will catch it
-			    }
+			    _ = sd.write(&encode_msp_vers(nxt, &[], vers));
                         },
                         Err(e) => eprintln!("Recv-err {}",e)
                     }
