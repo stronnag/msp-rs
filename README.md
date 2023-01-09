@@ -163,7 +163,7 @@ Rate    : 2384 messages in 38.5s (61.9/s) (unknown: 1, crc 0)
 
 ### Unsafe (C) serial implementation
 
-The rust serialport crate is used device enumeration. for Prior to version 0.10.0, the serialport crate was also used for I/O; since then a custom implementation is used.
+The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; since then a custom implementation is used.
 
 This example uses an (unsafe) C language implementation for serial I/O, rather than the serialport crate:
 
