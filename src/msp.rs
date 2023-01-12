@@ -52,52 +52,40 @@ fn crc8_dvb_s2(mut c: u8, a: u8) -> u8 {
 }
 
 pub fn encode_msp2(cmd: u16, payload: &[u8]) -> Vec<u8> {
-    let mut paylen = 0u16;
-    let payl = payload.len();
-    if payl > 0 {
-        paylen = payl as u16;
-    }
-    let mut v: Vec<u8> = Vec::new();
-    v.push(b'$');
-    v.push(b'X');
-    v.push(b'<');
-    v.push(0);
-    v.push((cmd & 0xff) as u8);
-    v.push((cmd >> 8) as u8);
-    v.push((paylen & 0xff) as u8);
-    v.push((paylen >> 8) as u8);
-
-    for x in payload.iter() {
-        v.push(*x);
-    }
+    let paylen = payload.len();
+    let mut v = vec![0;paylen+9];
+    v[0] = b'$';
+    v[1] = b'X';
+    v[2] = b'<';
+    v[3] = 0;
+    v[4] = (cmd & 0xff) as u8;
+    v[5] = (cmd >> 8) as u8;
+    v[6] = (paylen & 0xff) as u8;
+    v[7] = (paylen >> 8) as u8;
+    v[8..paylen + 8].copy_from_slice(payload);
     let mut crc: u8 = 0;
-    for i in 3..payl + 8 {
+    for i in 3..paylen + 8 {
         crc = crc8_dvb_s2(crc, v[i]);
     }
-    v.push(crc);
+    v[paylen+8] = crc;
     v
 }
 
 pub fn encode_msp(cmd: u16, payload: &[u8]) -> Vec<u8> {
-    let mut paylen = 0u8;
-    let payl = payload.len();
-    if payl > 0 {
-        paylen = payl as u8;
+    let paylen = payload.len();
+    //    let mut v: Vec<u8> = Vec::new();
+    let mut v = vec![0; paylen +6];
+    v[0] = b'$';
+    v[1] = b'M';
+    v[2] = b'<';
+    v[3] = paylen as u8;
+    v[4] = cmd as u8;
+    v[5..paylen + 5].copy_from_slice(payload);
+    let mut crc: u8 = v[3]^v[4];
+    for c in payload {
+        crc ^= c;
     }
-    let mut v: Vec<u8> = Vec::new();
-    v.push(b'$');
-    v.push(b'M');
-    v.push(b'<');
-    v.push(paylen);
-    v.push(cmd as u8);
-    for x in payload.iter() {
-        v.push(*x);
-    }
-    let mut crc: u8 = 0;
-    for i in 3..payl + 5 {
-        crc ^= v[i];
-    }
-    v.push(crc);
+    v[paylen+5] = crc;
     v
 }
 
