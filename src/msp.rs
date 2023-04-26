@@ -13,8 +13,9 @@ pub const MSG_STATUS_EX: u16 = 150;
 pub const MSG_INAV_STATUS: u16 = 0x2000;
 pub const MSG_MISC2: u16 = 0x203a;
 
-use crate::SerialDevice;
-use std::io::Read;
+use serial2::SerialPort;
+use std::sync::Arc;
+//use std::io::Read;
 
 #[derive(Debug, Clone)]
 pub enum MSPRes {
@@ -107,17 +108,23 @@ enum States {
     XChecksum,
 }
 
-pub fn reader(mut sd: SerialDevice, tx: crossbeam::channel::Sender<MSPMsg>) {
+pub fn reader(sd: Arc<SerialPort>, tx: crossbeam::channel::Sender<MSPMsg>) {
     let mut msg = MSPMsg::default();
     let mut n = States::Init;
     let mut crc = 0u8;
     let mut count = 0u16;
     let mut dirnok = false;
-
-    loop {
-        let mut inp = [0u8; 256];
-
+    let mut done = false;
+    let mut inp = [0u8; 256];
+    while !done {
         match sd.read(&mut inp) {
+	    Ok(0) => {
+                msg.cmd = 0;
+                msg.len = 0;
+                msg.ok = MSPRes::Fail;
+                tx.send(msg.clone()).unwrap();
+                done = true;
+	    },
             Ok(nbytes) => {
                 for e in inp.iter().take(nbytes) {
                     match n {
@@ -238,13 +245,14 @@ pub fn reader(mut sd: SerialDevice, tx: crossbeam::channel::Sender<MSPMsg>) {
                     }
                 }
             }
-            Err(_) => {
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(_e) => {
                 msg.cmd = 0;
                 msg.len = 0;
                 msg.ok = MSPRes::Fail;
                 tx.send(msg.clone()).unwrap();
-                return;
-            }
+                done = true;
+            },
         }
     }
 }

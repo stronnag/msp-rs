@@ -19,21 +19,20 @@ use msp::MSPMsg;
 use std::convert::TryInto;
 use std::env;
 use std::io;
+
 use std::io::stdout;
-use std::io::*;
+//use std::io::{Read, Write};
+use std::sync::Arc;
+
+use serial2::SerialPort;
 use std::thread;
 use std::time;
 use std::time::Duration;
 use std::time::Instant;
 use sys_info::*;
 
+extern crate serialport;
 mod msp;
-
-#[cfg_attr(unix, path = "serial_posix.rs")]
-#[cfg_attr(windows, path = "serial_windows.rs")]
-mod serial;
-
-use crate::serial::SerialDevice;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -259,6 +258,7 @@ fn ctrl_channel() -> std::result::Result<Receiver<u8>, io::Error> {
     Ok(receiver)
 }
 
+// Sadly, we use serialport (vice serial2) because we wantthe vid:pid
 pub fn get_serial_device(defdev: &str, testcvt: bool) -> String {
     match serialport::available_ports() {
         Ok(ports) => {
@@ -267,10 +267,9 @@ pub fn get_serial_device(defdev: &str, testcvt: bool) -> String {
                     serialport::SerialPortType::UsbPort(pt) => {
                         if (pt.vid == 0x0483 && pt.pid == 0x5740)
                             || (pt.vid == 0x0403 && pt.pid == 0x6001)
-                            || (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60))
-                        {
-                            return p.port_name.clone();
-                        }
+                            || (testcvt && (pt.vid == 0x10c4 && pt.pid == 0xea60)) {
+				return p.port_name.clone();
+                            }
                     }
                     _ => {
                         if std::env::consts::OS == "freebsd" && &p.port_name[0..9] == "/dev/cuaU" {
@@ -345,7 +344,7 @@ fn main() -> Result<()> {
     execute!(stdout(), Hide)?;
     execute!(stdout(), Clear(ClearType::All))?;
 
-    let mut sd = serial::SerialDevice::new();
+    let mut sd: SerialPort;
     'a: loop {
         let pname: String = if defdev == "auto" {
             get_serial_device(defdev, true)
@@ -355,8 +354,8 @@ fn main() -> Result<()> {
 
         redraw(cols, rows)?;
 
-        match sd.open(&pname, 115_200) {
-            Ok(_) => sd.clear(),
+        match SerialPort::open(&pname, 115_200) {
+            Ok(p) => sd = p,
             Err(_e) => {
                 let ticks = tick(Duration::from_millis(50));
                 let mut j = 0;
@@ -382,10 +381,13 @@ fn main() -> Result<()> {
         let (snd, rcv) = unbounded();
 
         outvalue(IY_PORT, &pname)?;
-
-        let rd = sd.clone();
-        let thr = thread::spawn(move || {
-            msp::reader(rd, snd);
+//        sd.set_read_timeout(Duration::from_millis(1)).unwrap();
+        let sd = Arc::new(sd);
+        let thr = thread::spawn({
+            let sd = sd.clone();
+            move || {
+                msp::reader(sd, snd);
+            }
         });
 
         let mut nto = 0;
@@ -400,99 +402,104 @@ fn main() -> Result<()> {
 
         'b: loop {
             select! {
-                    recv(ticks) -> _ => {
-                        if mtimer.elapsed() > Duration::from_millis(5000) {
-                            vers  = 1;
-                            nto += 1;
-                            outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
-                            mtimer = Instant::now();
-                            sd.write_all(&msp::encode_msp(msp::MSG_IDENT, &[]))?;
-                        }
+                recv(ticks) -> _ => {
+                    if mtimer.elapsed() > Duration::from_millis(5000) {
+                        vers  = 1;
+                        nto += 1;
+                        outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
+                        mtimer = Instant::now();
+                        sd.write_all(&msp::encode_msp(msp::MSG_IDENT, &[]))?;
+                    }
 
-                if msgcnt > 0 {
-                let dura = st.elapsed();
-                let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 / 1e9;
-                let rate = msgcnt as f64 / duras;
-                outvalue(
-                    IY_RATE,
-                    &format!("{} messages in {:.1}s ({:.1}/s) (unknown: {}, crc {})", msgcnt, duras, rate, e_bad, e_crc))?;
+                    if msgcnt > 0 {
+			let dura = st.elapsed();
+			let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 / 1e9;
+			let rate = msgcnt as f64 / duras;
+			outvalue(
+			    IY_RATE,
+			    &format!("{} messages in {:.1}s ({:.1}/s) (unknown: {}, crc {})", msgcnt, duras, rate, e_bad, e_crc))?;
+                    }
+		}
+
+                recv(ctrl_c_events) -> res => {
+                    if let Ok(x) = res {
+                    if x == b'Q' { clean_exit(rows);}
+			refresh = true;
+                    }
+                }
+
+                recv(rcv) -> res => {
+                    let mut nxt: u16;
+                    mtimer = Instant::now();
+                    match res {
+                        Ok(x) => {
+                            if msgcnt == 0 {
+				st = Instant::now();
+				e_crc = 0;
+				e_bad = 0;
+                            }
+                                    msgcnt += 1;
+                            let _last = x.cmd;
+                            match x.ok {
+                                msp::MSPRes::Ok => {
+                                    if let Some(i) = handle_msp(x, &mut vers, slow, once) {
+                                        nxt = i;
+                                    } else {
+                                        break 'a;
+                                    }
+                                },
+                                msp::MSPRes::Crc => {
+				    e_crc += 1;
+                                    nxt = msp::MSG_IDENT;
+                                },
+                                msp::MSPRes::Dirn => {
+				    e_bad += 1;
+                                    nxt = match x.cmd {
+                                        msp::MSG_IDENT => msp::MSG_NAME,
+                                        msp::MSG_NAME => msp::MSG_API_VERSION,
+                                        msp::MSG_API_VERSION => msp::MSG_FC_VARIANT,
+                                        msp::MSG_FC_VARIANT => msp::MSG_FC_VERSION,
+                                        msp::MSG_FC_VERSION => msp::MSG_BUILD_INFO,
+                                        msp::MSG_BUILD_INFO => msp::MSG_BOARD_INFO,
+                                        msp::MSG_BOARD_INFO => {
+                                            outvalue(IY_BOARD, "MultiWii")?;
+                                            msp::MSG_WP_GETINFO
+                                        },
+                                        msp::MSG_WP_GETINFO => msp::MSG_ANALOG,
+                                        msp::MSG_MISC2 => msp::MSG_ANALOG,
+                                        msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
+                                        msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
+                                        _ => msp::MSG_IDENT,
+                                    };
+                                },
+                                msp::MSPRes::Fail => {
+				    eprintln!("** MSP FAIL");
+				    thr.join().unwrap();
+				    break 'b ;
+                                },
+                            }
+                            if nxt == msp::MSG_IDENT  {
+				vers = 1;
+				msgcnt = 0;
+                            }
+                            if refresh {
+				refresh  = false;
+				nxt = msp::MSG_IDENT;
+				(cols, rows) = size()?;
+				execute!(stdout(), Clear(ClearType::All))?;
+				redraw(cols, rows)?;
+				outvalue(IY_PORT, &pname)?;
+                            }
+                            _ = sd.write(&encode_msp_vers(nxt, &[], vers));
+                        },
+                        Err(e) => {
+			    eprintln!("\n\n\nRecv-err {}",e);
+			    thr.join().unwrap();
+			    break 'b ;
+			}
+                    }
                 }
             }
-
-                    recv(ctrl_c_events) -> res => {
-                if let Ok(x) = res {
-                if x == b'Q' { clean_exit(rows);}
-                refresh = true;
-                }
-                    }
-
-                    recv(rcv) -> res => {
-                        let mut nxt: u16;
-                        mtimer = Instant::now();
-                        match res {
-                            Ok(x) => {
-                    if msgcnt == 0 {
-                    st = Instant::now();
-                    e_crc = 0;
-                    e_bad = 0;
-                    }
-                                msgcnt += 1;
-                    let _last = x.cmd;
-                                match x.ok {
-                                    msp::MSPRes::Ok => {
-                                        if let Some(i) = handle_msp(x, &mut vers, slow, once) {
-                                            nxt = i;
-                                        } else {
-                                            break 'a;
-                                        }
-                                    },
-                                    msp::MSPRes::Crc => {
-                        e_crc += 1;
-                                        nxt = msp::MSG_IDENT;
-                                    },
-                                    msp::MSPRes::Dirn => {
-                        e_bad += 1;
-                                        nxt = match x.cmd {
-                                            msp::MSG_IDENT => msp::MSG_NAME,
-                                            msp::MSG_NAME => msp::MSG_API_VERSION,
-                                            msp::MSG_API_VERSION => msp::MSG_FC_VARIANT,
-                                            msp::MSG_FC_VARIANT => msp::MSG_FC_VERSION,
-                                            msp::MSG_FC_VERSION => msp::MSG_BUILD_INFO,
-                                            msp::MSG_BUILD_INFO => msp::MSG_BOARD_INFO,
-                                            msp::MSG_BOARD_INFO => {
-                                                 outvalue(IY_BOARD, "MultiWii")?;
-                                                msp::MSG_WP_GETINFO
-                                            },
-                                            msp::MSG_WP_GETINFO => msp::MSG_ANALOG,
-                                            msp::MSG_MISC2 => msp::MSG_ANALOG,
-                                            msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
-                                            msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
-                                            _ => msp::MSG_IDENT,
-                                        };
-                                    },
-                                    msp::MSPRes::Fail => {
-                                        thr.join().unwrap();
-                        break 'b ;
-                                    },
-                                }
-                    if nxt == msp::MSG_IDENT  {
-                    vers = 1;
-                    msgcnt = 0;
-                    }
-                    if refresh {
-                    refresh  = false;
-                    nxt = msp::MSG_IDENT;
-                    (cols, rows) = size()?;
-                    execute!(stdout(), Clear(ClearType::All))?;
-                    redraw(cols, rows)?;
-                    outvalue(IY_PORT, &pname)?;
-                    }
-                    _ = sd.write(&encode_msp_vers(nxt, &[], vers));
-                            },
-                            Err(e) => eprintln!("Recv-err {}",e)
-                        }
-                    }
-                }
         }
     }
     clean_exit(rows);
