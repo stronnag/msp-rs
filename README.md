@@ -163,12 +163,9 @@ Rate    : 2384 messages in 38.5s (61.9/s) (unknown: 1, crc 0)
 
 ### Unsafe (C) serial implementation
 
-The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; since then a custom implementation is used.
+The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; since `serial2` is used for I/O.
 
-This example uses an (unsafe) C language implementation for serial I/O, rather than the serialport crate:
-
-* serialport does not support RISC-V
-* serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos) and unreliable across multiple threads. The embedded implementation is thread safe and the Windows performance is close to that of the POSIX platforms.
+* serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos) and unreliable across multiple threads. The `serial2` implementation is thread safe and the Windows performance is now around 40% of that of the POSIX platforms. Note that this is a rust limitation; when `msp-s` used a custom, (unsafe {}) 'C' serial reader, the Windows performance was quite close to that of the POSIX platforms.
 
 ### Other
 
