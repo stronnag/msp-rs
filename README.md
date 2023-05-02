@@ -159,15 +159,13 @@ Rate    : 2384 messages in 38.5s (61.9/s) (unknown: 1, crc 0)
 * Ancient INAV: c. 25% unknown
 * Modern INAV: 1 unknown
 
-## Discussion
+## Impementation
 
-### Unsafe (C) serial implementation
+The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; now the `serial2` is used for I/O, as it "sort of" works on Windows.
 
-The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; since `serial2` is used for I/O.
+serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos) and unreliable across multiple threads. The `serial2` implementation is thread safe and the Windows performance is now around 40% of that of the POSIX platforms. Note that this is a rust limitation; when `msp-s` briefly used a custom, (unsafe {}) 'C' serial reader, the Windows performance was quite close to that of the POSIX platforms.
 
-* serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos) and unreliable across multiple threads. The `serial2` implementation is thread safe and the Windows performance is now around 40% of that of the POSIX platforms. Note that this is a rust limitation; when `msp-s` used a custom, (unsafe {}) 'C' serial reader, the Windows performance was quite close to that of the POSIX platforms.
-
-### Other
+## Other
 
 There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also more capable.
 
