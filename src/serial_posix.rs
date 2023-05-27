@@ -14,7 +14,7 @@ extern "C" {
 
 #[derive(Debug, Clone)]
 pub struct SerialDevice {
-    fd: c_int,
+    pub fd: c_int,
 }
 
 unsafe impl Sync for SerialDevice {}
@@ -58,7 +58,7 @@ impl io::Read for SerialDevice {
         unsafe {
             n = read_serial(self.fd, buf.as_mut_ptr(), buf.len() as size_t);
         }
-        if n == 0 {
+        if n <= 0 {
             Err(io::Error::last_os_error())
         } else {
             Ok(n as usize)
@@ -72,9 +72,10 @@ impl io::Write for SerialDevice {
         unsafe {
             n = write_serial(self.fd, src.as_ptr(), src.len());
         }
-        match n {
-            0 => Err(io::Error::last_os_error()),
-            _ => Ok(n as usize),
+	if n <= 0 {
+            Err(io::Error::last_os_error())
+	} else {
+            Ok(n as usize)
         }
     }
 

@@ -26,6 +26,9 @@ use std::time;
 use std::time::Duration;
 use std::time::Instant;
 use sys_info::*;
+use std::net::TcpStream;
+
+mod parse_dev;
 
 mod msp;
 
@@ -33,25 +36,23 @@ mod msp;
 #[cfg_attr(windows, path = "serial_windows.rs")]
 mod serial;
 
-use crate::serial::SerialDevice;
-
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 iota! {
-    const IY_PORT : u16 = 4 + iota;
-    , IY_MW
-        , IY_NAME
-        , IY_APIV
-        , IY_FC
-        , IY_FCVERS
-        , IY_BUILD
-        , IY_BOARD
-        , IY_WPINFO
-        , IY_UPTIME
-        , IY_ANALOG
-        , IY_GPS
-        , IY_ARM
-        , IY_RATE
+    const IY_PORT : u16 = 4 + iota; ,
+    IY_MW,
+    IY_NAME,
+    IY_APIV,
+    IY_FC,
+    IY_FCVERS,
+    IY_BUILD,
+    IY_BOARD,
+    IY_WPINFO,
+    IY_UPTIME,
+    IY_ANALOG,
+    IY_GPS,
+    IY_ARM,
+    IY_RATE
 }
 
 struct Prompt {
@@ -285,6 +286,26 @@ pub fn get_serial_device(defdev: &str, testcvt: bool) -> String {
     }
 }
 
+fn wait_for_key (cc: &Receiver<u8>, tot: u64, itm: u32) -> bool {
+    let ticks = tick(Duration::from_millis(tot));
+    let mut j = 0;
+    loop {
+	select! {
+	    recv(ticks) -> _ => {
+		j += 1;
+		if j == itm {
+		    return true;
+		}
+	    }
+	    recv(cc) -> res => {
+		if let Ok(x) = res  {
+		    if x == b'Q' { return false}
+		}
+	    }
+	}
+    }
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
@@ -346,50 +367,67 @@ fn main() -> Result<()> {
     execute!(stdout(), Clear(ClearType::All))?;
 
     let mut sd = serial::SerialDevice::new();
-    'a: loop {
-        let pname: String = if defdev == "auto" {
-            get_serial_device(defdev, true)
-        } else {
-            defdev.to_string()
+    'a:
+    loop {
+	let thr: thread::JoinHandle<_>;
+	let mut is_ip = false;
+	let pname: String;
+	let param: u32;
+
+	match defdev {
+	    "auto" => {
+		param = 115200;
+		pname = get_serial_device(defdev, true);
+	    },
+	    _ => (pname, param, is_ip) = parse_dev::parse_uri_dev(defdev),
         };
 
         redraw(cols, rows)?;
+	let (snd, rcv) = unbounded();
 
-        match sd.open(&pname, 115_200) {
-            Ok(_) => sd.clear(),
-            Err(_e) => {
-                let ticks = tick(Duration::from_millis(50));
-                let mut j = 0;
-                'c: loop {
-                    select! {
-                    recv(ticks) -> _ => {
-                                    j += 1;
-                                    if j == 20 {
-                        break 'c;
-                                    }
-                    }
-                    recv(ctrl_c_events) -> res => {
-                        if let Ok(x) = res  {
-                        if x == b'Q' { break 'a;}
-                        }
-                    }
-                            }
-                }
-                continue 'a;
+	let mut strm: Box<dyn Write> = if !is_ip {
+            match sd.open(&pname, param as isize) {
+		Ok(_) => {
+		    sd.clear();
+		    let rd = sd.clone();
+		    thr = thread::spawn(move || {
+			msp::reader(Box::new(rd), snd);
+		    });
+		},
+		Err(_e) => {
+		    if wait_for_key(&ctrl_c_events, 50, 20) {
+			continue 'a;
+		    } else {
+			break 'a;
+		    }
+		}
             }
-        }
+	    Box::new(sd.clone())
+	} else {
+	    let conn: TcpStream;
+	    match TcpStream::connect((pname.as_str(), param as u16)) {
+		Ok(s) => {
+		    conn = s;
+		    let rstream = conn.try_clone().unwrap();
+		    thr = thread::spawn(move || {
+			msp::reader(Box::new(rstream), snd);
+		    });
+		},
+		Err(_e) => {
+		    if wait_for_key(&ctrl_c_events, 50, 20) {
+			continue 'a;
+		    } else {
+			break 'a;
+		    }
+		}
+	    }
+	    Box::new(conn)
+	};
 
-        let (snd, rcv) = unbounded();
-
-        outvalue(IY_PORT, &pname)?;
-
-        let rd = sd.clone();
-        let thr = thread::spawn(move || {
-            msp::reader(rd, snd);
-        });
+        outvalue(IY_PORT, &format!("{}:{}", &pname, param))?;
 
         let mut nto = 0;
-        sd.write_all(&msp::encode_msp(msp::MSG_IDENT, &[]))?;
+        _ = strm.write(&msp::encode_msp(msp::MSG_IDENT, &[]));
         let ticks = tick(Duration::from_millis(100));
         let mut st = Instant::now();
         let mut mtimer = Instant::now();
@@ -400,99 +438,106 @@ fn main() -> Result<()> {
 
         'b: loop {
             select! {
-                    recv(ticks) -> _ => {
-                        if mtimer.elapsed() > Duration::from_millis(5000) {
-                            vers  = 1;
-                            nto += 1;
-                            outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
-                            mtimer = Instant::now();
-                            sd.write_all(&msp::encode_msp(msp::MSG_IDENT, &[]))?;
-                        }
+                recv(ticks) -> _ => {
+                    if mtimer.elapsed() > Duration::from_millis(5000) {
+                        vers  = 1;
+                        nto += 1;
+                        outvalue(IY_RATE, &format!("Timeout ({})", nto))?;
+                        mtimer = Instant::now();
+                        _ = strm.write(&msp::encode_msp(msp::MSG_IDENT, &[]));
+                    }
 
-                if msgcnt > 0 {
-                let dura = st.elapsed();
-                let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 / 1e9;
-                let rate = msgcnt as f64 / duras;
-                outvalue(
-                    IY_RATE,
-                    &format!("{} messages in {:.1}s ({:.1}/s) (unknown: {}, crc {})", msgcnt, duras, rate, e_bad, e_crc))?;
+                    if msgcnt > 0 {
+			let dura = st.elapsed();
+			let duras: f64 = dura.as_secs() as f64 + dura.subsec_nanos() as f64 / 1e9;
+			let rate = msgcnt as f64 / duras;
+			outvalue(
+			    IY_RATE,
+			    &format!("{} messages in {:.1}s ({:.1}/s) (unknown: {}, crc {})", msgcnt, duras, rate, e_bad, e_crc))?;
+                    }
+		}
+
+                recv(ctrl_c_events) -> res => {
+                    if let Ok(x) = res {
+			if x == b'Q' { clean_exit(rows);}
+			refresh = true;
+                    }
+                }
+
+                recv(rcv) -> res => {
+                    let mut nxt: u16;
+                    mtimer = Instant::now();
+                    match res {
+                        Ok(x) => {
+			    if msgcnt == 0 {
+				st = Instant::now();
+				e_crc = 0;
+				e_bad = 0;
+			    }
+                            msgcnt += 1;
+			    let _last = x.cmd;
+                            match x.ok {
+                                msp::MSPRes::Ok => {
+                                    if let Some(i) = handle_msp(x, &mut vers, slow, once) {
+                                        nxt = i;
+                                    } else {
+                                        break 'a;
+                                    }
+                                },
+                                msp::MSPRes::Crc => {
+				    e_crc += 1;
+                                    nxt = msp::MSG_IDENT;
+                                },
+                                msp::MSPRes::Dirn => {
+				    e_bad += 1;
+                                    nxt = match x.cmd {
+                                        msp::MSG_IDENT => msp::MSG_NAME,
+                                        msp::MSG_NAME => msp::MSG_API_VERSION,
+                                        msp::MSG_API_VERSION => msp::MSG_FC_VARIANT,
+                                        msp::MSG_FC_VARIANT => msp::MSG_FC_VERSION,
+                                        msp::MSG_FC_VERSION => msp::MSG_BUILD_INFO,
+                                        msp::MSG_BUILD_INFO => msp::MSG_BOARD_INFO,
+                                        msp::MSG_BOARD_INFO => {
+                                            outvalue(IY_BOARD, "MultiWii")?;
+                                            msp::MSG_WP_GETINFO
+                                        },
+                                        msp::MSG_WP_GETINFO => msp::MSG_ANALOG,
+                                        msp::MSG_MISC2 => msp::MSG_ANALOG,
+                                        msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
+                                        msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
+                                            _ => msp::MSG_IDENT,
+                                    };
+                                },
+                                msp::MSPRes::Fail => {
+                                    thr.join().unwrap();
+				    break 'b ;
+                                },
+                            }
+			    if nxt == msp::MSG_IDENT  {
+				vers = 1;
+				msgcnt = 0;
+			    }
+			    if refresh {
+				refresh  = false;
+				nxt = msp::MSG_IDENT;
+				(cols, rows) = size()?;
+				execute!(stdout(), Clear(ClearType::All))?;
+				redraw(cols, rows)?;
+				outvalue(IY_PORT, &pname)?;
+			    }
+			    match strm.write(&encode_msp_vers(nxt, &[], vers)) {
+				Ok(_) => (),
+				Err(_) => break 'b,
+			    }
+                        },
+                        Err(e) => {
+			    eprintln!("Recv-err {}",e);
+                            thr.join().unwrap();
+			    break 'b
+			},
+                    }
                 }
             }
-
-                    recv(ctrl_c_events) -> res => {
-                if let Ok(x) = res {
-                if x == b'Q' { clean_exit(rows);}
-                refresh = true;
-                }
-                    }
-
-                    recv(rcv) -> res => {
-                        let mut nxt: u16;
-                        mtimer = Instant::now();
-                        match res {
-                            Ok(x) => {
-                    if msgcnt == 0 {
-                    st = Instant::now();
-                    e_crc = 0;
-                    e_bad = 0;
-                    }
-                                msgcnt += 1;
-                    let _last = x.cmd;
-                                match x.ok {
-                                    msp::MSPRes::Ok => {
-                                        if let Some(i) = handle_msp(x, &mut vers, slow, once) {
-                                            nxt = i;
-                                        } else {
-                                            break 'a;
-                                        }
-                                    },
-                                    msp::MSPRes::Crc => {
-                        e_crc += 1;
-                                        nxt = msp::MSG_IDENT;
-                                    },
-                                    msp::MSPRes::Dirn => {
-                        e_bad += 1;
-                                        nxt = match x.cmd {
-                                            msp::MSG_IDENT => msp::MSG_NAME,
-                                            msp::MSG_NAME => msp::MSG_API_VERSION,
-                                            msp::MSG_API_VERSION => msp::MSG_FC_VARIANT,
-                                            msp::MSG_FC_VARIANT => msp::MSG_FC_VERSION,
-                                            msp::MSG_FC_VERSION => msp::MSG_BUILD_INFO,
-                                            msp::MSG_BUILD_INFO => msp::MSG_BOARD_INFO,
-                                            msp::MSG_BOARD_INFO => {
-                                                 outvalue(IY_BOARD, "MultiWii")?;
-                                                msp::MSG_WP_GETINFO
-                                            },
-                                            msp::MSG_WP_GETINFO => msp::MSG_ANALOG,
-                                            msp::MSG_MISC2 => msp::MSG_ANALOG,
-                                            msp::MSG_INAV_STATUS => msp::MSG_STATUS_EX,
-                                            msp::MSG_STATUS_EX =>  msp::MSG_RAW_GPS,
-                                            _ => msp::MSG_IDENT,
-                                        };
-                                    },
-                                    msp::MSPRes::Fail => {
-                                        thr.join().unwrap();
-                        break 'b ;
-                                    },
-                                }
-                    if nxt == msp::MSG_IDENT  {
-                    vers = 1;
-                    msgcnt = 0;
-                    }
-                    if refresh {
-                    refresh  = false;
-                    nxt = msp::MSG_IDENT;
-                    (cols, rows) = size()?;
-                    execute!(stdout(), Clear(ClearType::All))?;
-                    redraw(cols, rows)?;
-                    outvalue(IY_PORT, &pname)?;
-                    }
-                    _ = sd.write(&encode_msp_vers(nxt, &[], vers));
-                            },
-                            Err(e) => eprintln!("Recv-err {}",e)
-                        }
-                    }
-                }
         }
     }
     clean_exit(rows);
@@ -682,8 +727,8 @@ fn get_armfails(reason: u32) -> String {
         "Other",
     ];
 
-    let s: String = if reason == 0 {
-        "Ready to arm".to_string()
+    let s: String = if reason & 0x73 != 0 {
+        "OK".to_string()
     } else {
         let mut v: Vec<String> = Vec::new();
         for (i, e) in ARMFAILS.iter().enumerate() {
