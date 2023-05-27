@@ -408,6 +408,7 @@ fn main() -> Result<()> {
 	    match TcpStream::connect((pname.as_str(), param as u16)) {
 		Ok(s) => {
 		    conn = s;
+		    _ = conn.set_nodelay(true);
 		    let rstream = conn.try_clone().unwrap();
 		    thr = thread::spawn(move || {
 			msp::reader(Box::new(rstream), snd);
