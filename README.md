@@ -4,7 +4,7 @@
 
 In the unlikely event that you're curious about using rust to communicate with a MSP flight controller (for example [inav](https://github.com/iNavFlight/inav), betaflight, multiwii even), then here's a trivial example of rust asynchronous MSP (using a "channels" pattern).
 
-Note that this is about day 4 of the author's on/off rust adventure, it may be non-idiomatic, naive etc. PRs welcome.
+Note that this is (still) about day 4 of the author's on/off rust adventure, it may be non-idiomatic, naive etc. PRs welcome.
 
 ## Example
 
@@ -71,6 +71,12 @@ msptest /dev/cu.usbmodem0x80000001
 # Windows
 # This would be auto-discovered
 msptest.exe COM17
+```
+
+You can also use a TCP pseudo-URI (e.g. for use with the SITL):
+
+```
+msptest tcp://localhost:5767
 ```
 
 ## Makefile
@@ -159,15 +165,21 @@ Rate    : 2384 messages in 38.5s (61.9/s) (unknown: 1, crc 0)
 * Ancient INAV: c. 25% unknown
 * Modern INAV: 1 unknown
 
-## Impementation
+## Discussion
 
-The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; now the `serial2` is used for I/O, as it "sort of" works on Windows.
+### Unsafe (C) serial implementation
 
-serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos) and unreliable across multiple threads. The `serial2` implementation is thread safe and the Windows performance is now around 40% of that of the POSIX platforms. Note that this is a rust limitation; when `msp-s` briefly used a custom, (unsafe {}) 'C' serial reader, the Windows performance was quite close to that of the POSIX platforms.
+The rust serialport crate is used device enumeration. Prior to version 0.10.0, the serialport crate was also used for I/O; since then a custom implementation is used.
 
-## Other
+This example uses an (unsafe) C language implementation for serial I/O, rather than the serialport crate (or even the better serial2 crate):
 
-There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also more capable.
+* serialport did not support RISC-V (at one time)
+* serialport performance on Windows is poor (c. 25% of Linux / FreeBSD / Macos) and unreliable across multiple threads. The embedded implementation is thread safe and the Windows performance is close to that of the POSIX platforms.
+* serial2 requires `Arc()` in order to use a separate reader thread. This rather upsets the current device independent implementation .
+
+### Other
+
+There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also slightly capable.
 
 ## Licence
 
