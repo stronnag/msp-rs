@@ -112,7 +112,7 @@ const UIPROMPTS: [Prompt; 14] = [
     },
     Prompt {
         y: IY_RATE,
-        s: "Rate",
+        s: "IO Stats",
     },
 ];
 
