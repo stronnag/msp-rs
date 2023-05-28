@@ -1,6 +1,6 @@
 [package]
 name = "msptest"
-version = "0.31.0"
+version = "0.32.0"
 edition = "2021"
 authors = ["Jonathan Hudson <jh+github@daria.co.uk>"]
 
@@ -26,3 +26,4 @@ features = [ "handleapi", "winnt", ]
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
 opt-level = "z"
+lto = true # Link Time Optimization (LTO)
