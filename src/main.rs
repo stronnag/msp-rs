@@ -52,7 +52,8 @@ iota! {
     IY_ANALOG,
     IY_GPS,
     IY_ARM,
-    IY_RATE
+    IY_RATE,
+    IY_DEBUG
 }
 
 struct Prompt {
@@ -60,7 +61,7 @@ struct Prompt {
     s: &'static str,
 }
 
-const UIPROMPTS: [Prompt; 14] = [
+const UIPROMPTS: [Prompt; 15] = [
     Prompt {
         y: IY_PORT,
         s: "Port",
@@ -113,6 +114,10 @@ const UIPROMPTS: [Prompt; 14] = [
     Prompt {
         y: IY_RATE,
         s: "IO Stats",
+    },
+    Prompt {
+        y: IY_DEBUG,
+        s: "Debug",
     },
 ];
 
@@ -470,17 +475,21 @@ fn main() -> Result<()> {
                     mtimer = Instant::now();
                     match res {
                         Ok(x) => {
-			    if msgcnt == 0 {
-				st = Instant::now();
-				e_crc = 0;
-				e_bad = 0;
-			    }
-                            msgcnt += 1;
 			    let _last = x.cmd;
                             match x.ok {
                                 msp::MSPRes::Ok => {
                                     if let Some(i) = handle_msp(x, &mut vers, slow, once) {
-                                        nxt = i;
+					if i == 0 {
+					    continue 'b;
+					} else {
+					    if msgcnt == 0 {
+						st = Instant::now();
+						e_crc = 0;
+						e_bad = 0;
+					    }
+                                            nxt = i;
+					    msgcnt += 1;
+					}
                                     } else {
                                         break 'a;
                                     }
@@ -681,11 +690,11 @@ fn handle_msp(x: MSPMsg, vers: &mut u8, slow: bool, once: bool) -> Option<u16> {
         }
         msp::MSG_DEBUGMSG => {
             let s = String::from_utf8_lossy(&x.data);
-            println!("Debug: {}", s);
-            nxt = Some(msp::MSG_IDENT)
+	    let s = str::replace(&s, &['\r','\n','\x00'], "");
+            outvalue(IY_DEBUG, &s).unwrap();
+            nxt = Some(0)
         }
         _ => {
-            println!("Recv: {:#?}", x);
             nxt = Some(msp::MSG_IDENT)
         }
     }
