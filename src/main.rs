@@ -706,9 +706,9 @@ fn get_armfails(reason: u32) -> String {
         "",
         "",
         "Armed",
-        "",
-        "",
-        "",
+        "OK",
+        "HITL",
+        "SITL",
         "",
         "F/S",
         "Level",
@@ -737,8 +737,12 @@ fn get_armfails(reason: u32) -> String {
         "Other",
     ];
 
-    let s: String = if reason & 0x73 != 0 {
-        "OK".to_string()
+    let s: String = if reason < 0x80 {
+	if reason & (1<<2) != 0 {
+	    "Armed".to_string()
+	} else {
+	    "Ready to arm".to_string()
+	}
     } else {
         let mut v: Vec<String> = Vec::new();
         for (i, e) in ARMFAILS.iter().enumerate() {
