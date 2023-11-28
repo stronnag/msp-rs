@@ -24,7 +24,7 @@ pub fn parse_uri_dev (arg: &str) -> (String, u32, bool) {
             }
         },
         Err(_) => {
-            name = arg.clone().to_string();
+            name = arg.to_string();
             need_split = true;
         }
     };

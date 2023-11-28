@@ -136,11 +136,11 @@ fn get_rel_info() -> String {
     let osrel = os_release().unwrap_or("unknown".to_string());
     let ostype = get_ostype();
     format!(
-        "v{} on {} {} {}",
+        "v{} on {} {} {}, (rust)",
         VERSION,
         &ostype,
         &osrel,
-        std::env::consts::ARCH
+        std::env::consts::ARCH,
     )
 }
 
