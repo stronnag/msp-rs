@@ -27,6 +27,8 @@ use std::time::Duration;
 use std::time::Instant;
 use sys_info::*;
 use std::net::TcpStream;
+use std::net::UdpSocket;
+use std::os::fd::{AsRawFd, RawFd};
 
 mod parse_dev;
 
@@ -375,7 +377,7 @@ fn main() -> Result<()> {
     'a:
     loop {
 	let thr: thread::JoinHandle<_>;
-	let mut is_ip = false;
+	let mut dtyp: u8 = 0;
 	let pname: String;
 	let param: u32;
 
@@ -384,13 +386,13 @@ fn main() -> Result<()> {
 		param = 115200;
 		pname = get_serial_device(defdev, true);
 	    },
-	    _ => (pname, param, is_ip) = parse_dev::parse_uri_dev(defdev),
+	    _ => (pname, param, dtyp) = parse_dev::parse_uri_dev(defdev),
         };
 
         redraw(cols, rows)?;
 	let (snd, rcv) = unbounded();
 
-	let mut strm: Box<dyn Write> = if !is_ip {
+	let mut strm: Box<dyn Write> = if dtyp == 0 {
             match sd.open(&pname, param as isize) {
 		Ok(_) => {
 		    sd.clear();
@@ -408,7 +410,7 @@ fn main() -> Result<()> {
 		}
             }
 	    Box::new(sd.clone())
-	} else {
+	} else if dtyp == 1 {
 	    let conn: TcpStream;
 	    match TcpStream::connect((pname.as_str(), param as u16)) {
 		Ok(s) => {
@@ -428,6 +430,15 @@ fn main() -> Result<()> {
 		}
 	    }
 	    Box::new(conn)
+	} else {
+	    let socket = UdpSocket::bind("[::]:0")?;
+	    socket.connect("127.0.0.1:8080").expect("connect function failed");
+	    let sfd = socket.as_raw_fd();
+	    let rsock = sfd.try_clone().unwrap();
+		    thr = thread::spawn(move || {
+			msp::reader(Box::new(rsock), snd);
+		    });
+	    Box::new(sfd)
 	};
 
         outvalue(IY_PORT, &format!("{}:{}", &pname, param))?;

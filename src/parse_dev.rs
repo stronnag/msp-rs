@@ -1,17 +1,21 @@
 use url::Url;
 use regex::Regex;
 
-pub fn parse_uri_dev (arg: &str) -> (String, u32, bool) {
+pub fn parse_uri_dev (arg: &str) -> (String, u32, u8) {
     let mut name: String ;
     let mut param: u32 = 0;
-    let mut is_ip = false;
+    let mut typ: u8 = 0;
     let mut need_split = false;
     match Url::parse(arg) {
         Ok(u) => {
             match u.host_str() {
                 Some(n) => {
                     name = n.to_string();
-                    is_ip = u.scheme() == "tcp";
+		    typ = match u.scheme() {
+			"tcp" => 1,
+			"udp" => 2,
+			_ => 0,
+		    };
                     match u.port() {
                         Some(d) => param = u32::from(d),
                         None => param = 5760
@@ -42,5 +46,5 @@ pub fn parse_uri_dev (arg: &str) -> (String, u32, bool) {
             None => param = 115200,
         };
     }
-    (name,param,is_ip)
+    (name,param,typ)
 }
