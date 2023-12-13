@@ -79,6 +79,12 @@ You can also use a TCP pseudo-URI (e.g. for use with the SITL):
 msptest tcp://localhost:5767
 ```
 
+and on **unix** platforms, UDP:
+
+```
+msptest udp://localhost:53285
+```
+
 ## Makefile
 
 As a short cut for `cargo` commands / options, there's a Makefile
@@ -179,7 +185,7 @@ This example uses an (unsafe) C language implementation for serial I/O, rather t
 
 ### Other
 
-There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest, however the rust version is also slightly capable.
+There is an [similar Golang example](https://github.com/stronnag/msp-go); you may judge which is the cleanest / simplest.
 
 ## Licence
 
