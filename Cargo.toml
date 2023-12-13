@@ -1,6 +1,6 @@
 [package]
 name = "msptest"
-version = "0.33.0"
+version = "0.34.0"
 edition = "2021"
 authors = ["Jonathan Hudson <jh+github@daria.co.uk>"]
 

@@ -27,8 +27,15 @@ use std::time::Duration;
 use std::time::Instant;
 use sys_info::*;
 use std::net::TcpStream;
+
+#[cfg(all(unix))]
 use std::net::UdpSocket;
-use std::os::fd::{AsRawFd, RawFd};
+#[cfg(all(unix))]
+use std::fs::File;
+#[cfg(all(unix))]
+use std::os::fd::FromRawFd;
+#[cfg(all(unix))]
+use std::os::fd::IntoRawFd;
 
 mod parse_dev;
 
@@ -431,14 +438,20 @@ fn main() -> Result<()> {
 	    }
 	    Box::new(conn)
 	} else {
+#[cfg(all(unix))]
+	    {
 	    let socket = UdpSocket::bind("[::]:0")?;
-	    socket.connect("127.0.0.1:8080").expect("connect function failed");
-	    let sfd = socket.as_raw_fd();
-	    let rsock = sfd.try_clone().unwrap();
+	    socket.connect(&format!("{}:{}", pname.as_str(), param as u16)).expect("connect function failed");
+	    let f = unsafe { File::from_raw_fd(socket.into_raw_fd()) };
+	    let rsock = f.try_clone().unwrap();
 		    thr = thread::spawn(move || {
 			msp::reader(Box::new(rsock), snd);
 		    });
-	    Box::new(sfd)
+	    Box::new(f)
+	    }
+
+#[cfg(not(unix))]
+	    break 'a;
 	};
 
         outvalue(IY_PORT, &format!("{}:{}", &pname, param))?;
