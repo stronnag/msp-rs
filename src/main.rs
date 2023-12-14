@@ -228,7 +228,7 @@ fn clean_exit(rows: u16) {
 
 fn print_usage(program: &str, opts: &Options) {
     let brief = format!(
-        "Usage: {} [options] [device-node]\nVersion: {}",
+        "Usage: {} [options] [device-node|URI]\nVersion: {}",
         program, VERSION
     );
     print!("{}", opts.usage(&brief));
