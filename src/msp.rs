@@ -10,6 +10,7 @@ pub const MSG_RAW_GPS: u16 = 106;
 pub const MSG_ANALOG: u16 = 110;
 pub const MSG_DEBUGMSG: u16 = 253;
 pub const MSG_STATUS_EX: u16 = 150;
+pub const MSG_ANALOG2: u16 = 0x2002;
 pub const MSG_INAV_STATUS: u16 = 0x2000;
 pub const MSG_MISC2: u16 = 0x203a;
 

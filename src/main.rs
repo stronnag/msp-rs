@@ -653,18 +653,21 @@ fn handle_msp(x: MSPMsg, vers: &mut u8, slow: bool, once: bool) -> Option<u16> {
         msp::MSG_MISC2 => {
             let uptime = u32::from_le_bytes(x.data[0..4].try_into().unwrap());
             outvalue(IY_UPTIME, &format!("{}s", uptime)).unwrap();
-            nxt = Some(msp::MSG_ANALOG)
+            nxt = Some(msp::MSG_ANALOG2)
         }
 
         msp::MSG_ANALOG => {
             let volts: f32 = x.data[0] as f32 / 10.0;
             let amps: f32 = u16::from_le_bytes(x.data[5..7].try_into().unwrap()) as f32 / 100.0;
             outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
-            nxt = if *vers == 2 {
-                Some(msp::MSG_INAV_STATUS)
-            } else {
-                Some(msp::MSG_STATUS_EX)
-            };
+            nxt = Some(msp::MSG_STATUS_EX)
+        }
+
+        msp::MSG_ANALOG2 => {
+            let volts: f32 = u16::from_le_bytes(x.data[1..3].try_into().unwrap()) as f32 / 100.0;
+            let amps: f32 = u16::from_le_bytes(x.data[3..5].try_into().unwrap()) as f32 / 100.0;
+            outvalue(IY_ANALOG, &format!("{:.1} volts, {:2} amps", volts, amps)).unwrap();
+            nxt = Some(msp::MSG_INAV_STATUS)
         }
 
         msp::MSG_INAV_STATUS => {
