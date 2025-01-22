@@ -736,7 +736,7 @@ fn get_armfails(reason: u32) -> String {
         "OK",
         "HITL",
         "SITL",
-        "",
+        "Geozone",
         "F/S",
         "Level",
         "Calibrate",
@@ -764,7 +764,7 @@ fn get_armfails(reason: u32) -> String {
         "Other",
     ];
 
-    let s: String = if reason < 0x80 {
+    let s: String = if reason < 0x40 {
 	if reason & (1<<2) != 0 {
 	    "Armed".to_string()
 	} else {
