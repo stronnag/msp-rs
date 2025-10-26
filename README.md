@@ -1,4 +1,6 @@
-# Using rust for MSP (inav etc.)
+# Migrated to [codeberg](https://codeberg.org/stronnag/msp-rs)
+
+## Using rust for MSP (inav etc.)
 
 ## Introduction
 
